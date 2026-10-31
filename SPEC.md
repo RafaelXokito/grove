@@ -309,6 +309,7 @@ AC: TempDir root with 2 repos, 1 non-repo, 1 linked worktree inside root, 1 repo
 **T4 — Session model, binder, Claude source** (FR-4)
 `sessions.Session`, `Source`, `Bind`; `claude.Source{Dir}` with bounded head/tail reads, last-cwd binding, ai-title, subagent exclusion, history window.
 AC: fixture tests for all cases in FR-4; Bind table tests incl. prefix trap and symlinks both sides; head ≤ 256 KiB + tail ≤ 64 KiB (large fixture with prompt past limit → title empty, cwd from tail, no error); file older than window not opened.
+Notes: (a) canonicalize worktree paths (`pathx.Canonical`) **once per scan** and cache them; only session/proc cwds are canonicalized per lookup, so `Bind` stays a cheap in-memory operation. (b) On darwin, compare paths **case-insensitively** (default APFS is case-insensitive, and agents may record a cwd with different casing than git); on Linux compare case-sensitively. Choice: fold case via a build-tagged comparison helper in `pathx` rather than querying the filesystem, accepting a rare false match on case-sensitive APFS volumes.
 
 **T5 — Codex source** (FR-5)
 `codex.Source{Dir}` per FR-5: `session_meta`, last `turn_context` cwd, `user_message` title, subagent exclusion, `sessions/` + `archived_sessions/`, `.jsonl.zst` skipped and counted; `$CODEX_HOME`.
