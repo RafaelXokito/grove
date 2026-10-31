@@ -72,8 +72,9 @@ grove reads Claude Code transcripts from `<claude-dir>/projects/*/*.jsonl` (defa
 ### FR-5 Codex session binding
 grove reads Codex rollouts from `<codex-dir>/sessions/YYYY/MM/DD/rollout-*.jsonl` and `<codex-dir>/archived_sessions/` (`<codex-dir>` = `$CODEX_HOME` else `~/.codex`).
 - Line format: `{"timestamp":…,"type":"<snake_case>","payload":{…}}`.
-- Line 1 `session_meta`: id = `payload.session_id` else `payload.id`; initial cwd = `payload.cwd`.
-- **Exclude** subagent sessions: `payload.source` is an object (not a string) or `payload.thread_source=="subagent"`.
+- Line 1 `session_meta`: id = `payload.id` (the thread id `codex resume` takes) else `payload.session_id` else the thread id from the filename (`rollout-<ts>-<threadId>[_<rolloutId>].jsonl`); initial cwd = `payload.cwd`. Line 1 is read with its own 4 MiB cap (real metas carry large `base_instructions`); if unreadable, fall back to filename id + `turn_context` cwd, and with no cwd at all count it in `skipped`.
+- Several rollouts can share a thread id (revert writes a new rollout; `sessions/` vs `archived_sessions/`): keep the one with the newest mtime.
+- **Exclude** subagent/internal sessions: `payload.source` is an object with key `subagent` or `internal`, or `payload.thread_source` ∈ {`subagent`, `guardian_review`, `memory_consolidation`}. `{"custom":…}` sources are kept.
 - **cwd**: last `turn_context` `payload.cwd` (tail read, ≤64 KiB) wins, else `session_meta.cwd`.
 - **Title**: first `{"type":"event_msg","payload":{"type":"user_message","message":…}}`. Do not use `response_item` user messages (they contain injected AGENTS.md/env context).
 - `payload.git.branch` is reliable but only shown in details (FR-15); the tree uses git's branch.
@@ -167,6 +168,7 @@ Case-insensitive substring match on project name, worktree path, branch, and ses
 - Given any root, When grove starts, Then the first frame renders within 100 ms showing a loading spinner; repos appear incrementally as they are discovered.
 - All git and file I/O happens in `tea.Cmd`s, never in `Update`/`View`.
 - Concurrency bounded (default `runtime.NumCPU()*2` workers for git calls).
+- Each per-worktree `git status` call has a timeout (default 10 s, `scan.Options.StatusTimeout`); a hung repo yields a per-worktree error (`status timed out after 10s`) and never stalls the scan.
 - Session parsing reads at most 256 KiB head + 64 KiB tail per file plus `stat`; files are never fully read; files outside the history window are not opened.
 - Given 50 repos × 3 worktrees and 2,000 session files on an SSD, Then full scan completes in < 2 s (benchmark, not a CI gate).
 
@@ -305,7 +307,7 @@ AC: fixture repo tests for clean, dirty (3), ahead/behind with a local bare "rem
 
 **T3 — Repo discovery + concurrent scanner** (FR-1, FR-18 partial)
 `scan.Discover` (depth, skip list, `.git` file vs dir), bounded worker pool loading worktrees+status, streaming results.
-AC: TempDir root with 2 repos, 1 non-repo, 1 linked worktree inside root, 1 repo beyond depth → exactly 2 repos; `-race` clean; unreadable dir doesn't abort.
+AC: TempDir root with 2 repos, 1 non-repo, 1 linked worktree inside root, 1 repo beyond depth → exactly 2 repos; `-race` clean; unreadable dir doesn't abort; a hung `git status` times out (default 10 s) as a per-worktree error.
 
 **T4 — Session model, binder, Claude source** (FR-4)
 `sessions.Session`, `Source`, `Bind`; `claude.Source{Dir}` with bounded head/tail reads, last-cwd binding, ai-title, subagent exclusion, history window.
@@ -313,7 +315,7 @@ AC: fixture tests for all cases in FR-4; Bind table tests incl. prefix trap and 
 Notes: (a) canonicalize worktree paths (`pathx.Canonical`) **once per scan** and cache them; only session/proc cwds are canonicalized per lookup, so `Bind` stays a cheap in-memory operation. (b) On darwin, compare paths **case-insensitively** (default APFS is case-insensitive, and agents may record a cwd with different casing than git); on Linux compare case-sensitively. Choice: fold case via a build-tagged comparison helper in `pathx` rather than querying the filesystem, accepting a rare false match on case-sensitive APFS volumes.
 
 **T5 — Codex source** (FR-5)
-`codex.Source{Dir}` per FR-5: `session_meta`, last `turn_context` cwd, `user_message` title, subagent exclusion, `sessions/` + `archived_sessions/`, `.jsonl.zst` skipped and counted; `$CODEX_HOME`.
+`codex.Source{Dir}` per FR-5: `session_meta` (id precedence `id` > `session_id` > filename; large line 1 handled), dedupe by thread id, last `turn_context` cwd, `user_message` title, subagent exclusion, `sessions/` + `archived_sessions/`, `.jsonl.zst` skipped and counted; `$CODEX_HOME`.
 AC: fixture rollouts parse to expected Session; subagent excluded; `.zst` file → skipped=1; missing dir → empty, nil error.
 
 **T6 — Live process detection** (FR-6)
