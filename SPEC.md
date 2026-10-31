@@ -56,13 +56,14 @@ For each worktree grove shows dirty/clean with changed-file count and ahead/behi
 grove reads Claude Code transcripts from `<claude-dir>/projects/*/*.jsonl` (default `~/.claude`).
 - One top-level file = one session; id = file basename (= `sessionId` in lines). The `<enc>` dir name is lossy: **never decode it**; read `cwd` from content.
 - **Exclude** `*/subagents/` dirs, `memory/`, and lines with `isSidechain:true`.
-- **cwd**: the **last** `cwd` field in the file (tail read, ≤64 KiB backwards); if none in the tail, the first `cwd` from a head read (≤256 KiB, scanning past leading `mode`/`bridge-session`/`file-history-snapshot` lines that have no cwd). cwd changes mid-session because Bash `cd` persists into per-line `cwd`.
-- **Title**: the last `{"type":"ai-title","aiTitle":…}` value if present, else the first real prompt. First real prompt = first `type:"user"` line with `isMeta`≠true, not sidechain, no `toolUseResult`, `message.content` a string not starting with `<` (if `origin` exists, require `origin.kind=="human"`). Truncated to 80 runes for display.
+- **cwd**: the **last** `cwd` field in the file (tail read, ≤64 KiB backwards); if none in the tail, the last `cwd` seen in a head read (≤256 KiB, scanning past leading `mode`/`bridge-session`/`file-history-snapshot` lines that have no cwd). cwd changes mid-session because Bash `cd` persists into per-line `cwd`.
+- **Title**: the last `{"type":"ai-title","aiTitle":…}` value if present, else the first real prompt. First real prompt = first `type:"user"` line with `isMeta`≠true, not sidechain, no `toolUseResult`, `message.content` a string not starting with `<`, or an array whose first `text` block doesn't start with `<` and that has no `tool_result` block (e.g. pasted image + text) (if `origin` exists, require `origin.kind=="human"`). Truncated to 80 runes for display.
 - **Ignore `gitBranch`** (unreliable, often `"HEAD"`); branch comes from git (FR-2).
 - Last activity = file mtime. Files with mtime older than `history_days` (default 30) are skipped without opening.
 - Binding (all sources): session binds to the worktree whose path is the **longest** path equal to or an ancestor of the session cwd, after `filepath.Clean` + `EvalSymlinks` on **both** sides (`/tmp` vs `/private/tmp`).
 - Given cwd `/x/repo-wt/sub` and worktrees `/x/repo` and `/x/repo-wt`, Then it binds to `/x/repo-wt` (no prefix false-match).
 - Given a session whose first cwd is `/x/repo` and last cwd is `/x/repo-wt`, Then it binds to `/x/repo-wt`.
+- Given a large file whose tail has no cwd and whose head has cwd `/first` then `/second`, Then cwd is `/second`.
 - Given an `ai-title` line, Then the title is the ai-title, not the prompt.
 - Given a malformed line, Then it is skipped; given no cwd at all, Then the session is ignored.
 - Given a `subagents/agent-*.jsonl` file, Then it is not listed.
