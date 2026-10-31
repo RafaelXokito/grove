@@ -1,7 +1,11 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"runtime"
 	"strings"
 	"time"
 	"unicode"
@@ -297,7 +301,7 @@ func (m *Model) body(w int) string {
 		} else if m.filter != "" {
 			msg = "No matches for filter " + fmt.Sprintf("%q", sanitize(m.filter)) + " (esc clears)."
 		} else {
-			msg = "No git repositories found."
+			return m.emptyBody(w, h)
 		}
 		b.WriteString(fit(msg, w))
 		b.WriteByte('\n')
@@ -316,6 +320,77 @@ func (m *Model) body(w int) string {
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// emptyBody explains an empty, settled, unfiltered scan: the discovery
+// errors (e.g. an unreadable root) if any, otherwise what was scanned. It
+// renders at most h lines.
+func (m *Model) emptyBody(w, h int) string {
+	var lines []string
+	if len(m.discErrs) == 0 {
+		msg := "No git repositories found."
+		if len(m.deps.Roots) > 0 {
+			roots := make([]string, len(m.deps.Roots))
+			for i, r := range m.deps.Roots {
+				roots[i] = sanitize(pathx.AbbrevHome(r, m.deps.Home))
+			}
+			msg = fmt.Sprintf("No git repositories found under %s (depth %d).", strings.Join(roots, ", "), m.scanDepth())
+		}
+		lines = append(lines, msg)
+	} else {
+		lines = append(lines, "No git repositories found.")
+		perm := false
+		for _, err := range m.discErrs {
+			lines = append(lines, styleErr.Render("✗ "+m.discErrText(err)))
+			perm = perm || errors.Is(err, os.ErrPermission)
+		}
+		if perm && runtime.GOOS == "darwin" {
+			for _, l := range strings.Split(ansi.Wordwrap(macPermHint, w, ""), "\n") {
+				lines = append(lines, styleDim.Render(l))
+			}
+		}
+	}
+	if len(lines) > h {
+		lines = lines[:h]
+	}
+	var b strings.Builder
+	for _, l := range lines {
+		b.WriteString(fit(l, w))
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+const macPermHint = "macOS may be blocking this terminal from ~/Documents: System Settings → Privacy & Security → Files and Folders / Full Disk Access."
+
+// scanDepth is the effective discovery depth (see scan.Options.MaxDepth).
+func (m *Model) scanDepth() int {
+	switch d := m.deps.MaxDepth; {
+	case d == 0:
+		return scan.DefaultMaxDepth
+	case d < 0:
+		return 0
+	default:
+		return d
+	}
+}
+
+// discErrText renders a discovery error as "cannot read <dir>: <cause>",
+// abbreviating the path; other errors are shown as-is.
+func (m *Model) discErrText(err error) string {
+	var de *scan.DirError
+	if !errors.As(err, &de) {
+		return sanitize(err.Error())
+	}
+	cause := de.Err
+	var pe *fs.PathError
+	if errors.As(cause, &pe) && pe.Err != nil {
+		cause = pe.Err
+	}
+	if cause == nil {
+		return sanitize(err.Error())
+	}
+	return sanitize("cannot read " + pathx.AbbrevHome(de.Path, m.deps.Home) + ": " + cause.Error())
 }
 
 func (m *Model) marker(r row) string {

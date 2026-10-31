@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -669,5 +670,44 @@ func TestConfigWarningsInStatusLine(t *testing.T) {
 	h.send(t, tea.WindowSizeMsg{Width: 200, Height: 20})
 	if v := h.view(); !strings.Contains(v, `warning: config /c.toml: unknown key "bogus" ignored`) {
 		t.Errorf("status line missing warning:\n%s", v)
+	}
+}
+
+func TestEmptyStateShowsDiscoveryErrors(t *testing.T) {
+	h := newHarness(t, nil, nil, nil)
+	h.scan.events = []scan.Event{{Err: &scan.DirError{
+		Path: "/home/u/Documents/repos",
+		Err:  &os.PathError{Op: "open", Path: "/home/u/Documents/repos", Err: os.ErrPermission},
+	}}}
+	h.settle(t, h.m.Init())
+	h.send(t, tea.WindowSizeMsg{Width: 200, Height: 40})
+	v := ansi.Strip(h.view())
+	for _, want := range []string{
+		"No git repositories found.",
+		"✗ cannot read ~/Documents/repos: permission denied",
+	} {
+		if !strings.Contains(v, want) {
+			t.Errorf("view lacks %q:\n%s", want, v)
+		}
+	}
+	if hint := strings.Contains(v, "Full Disk Access"); hint != (runtime.GOOS == "darwin") {
+		t.Errorf("macOS hint shown = %v on %s:\n%s", hint, runtime.GOOS, v)
+	}
+
+	// The body never overflows a tiny terminal.
+	h.send(t, tea.WindowSizeMsg{Width: 40, Height: 4})
+	if n := strings.Count(h.view(), "\n") + 1; n > 4 {
+		t.Errorf("view is %d lines, want <= 4:\n%s", n, h.view())
+	}
+}
+
+func TestEmptyStateShowsRoots(t *testing.T) {
+	h := newHarness(t, nil, nil, nil)
+	h.m.deps.Roots = []string{"/home/u/Documents/repos"}
+	h.m.rootsCanon = []string{"/home/u/Documents/repos"}
+	h.settle(t, h.m.Init())
+	h.send(t, tea.WindowSizeMsg{Width: 120, Height: 40})
+	if v := ansi.Strip(h.view()); !strings.Contains(v, "No git repositories found under ~/Documents/repos (depth 3).") {
+		t.Errorf("view lacks roots message:\n%s", v)
 	}
 }
