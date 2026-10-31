@@ -34,7 +34,7 @@ func (w Worktree) ShortHEAD() string {
 	return w.HEAD
 }
 
-// Status is the dirty/upstream state of a worktree (parsed in T2 from
+// Status is the dirty/upstream state of a worktree (parsed by ParseStatus from
 // `git status --porcelain=v2 --branch`).
 type Status struct {
 	Changed     int
