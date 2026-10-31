@@ -85,11 +85,18 @@ func LoadStatus(ctx context.Context, r Runner, wt Worktree) (*Status, error) {
 	if _, err := os.Stat(wt.Path); errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
+	return WorktreeStatus(ctx, r, wt.Path)
+}
+
+// WorktreeStatus runs `git -C <path> status --porcelain=v2 --branch` without
+// LoadStatus's missing-directory shortcut (a missing directory is an error).
+// Used for the fresh re-check before a destructive action.
+func WorktreeStatus(ctx context.Context, r Runner, path string) (*Status, error) {
 	// --untracked-files=normal overrides a user's status.showUntrackedFiles
 	// so untracked files are always counted as changes.
 	// --ignore-submodules=dirty keeps scans fast (no recursion into
 	// submodule work trees) while still reporting moved submodule commits.
-	out, err := r.Run(ctx, wt.Path, "status", "--porcelain=v2", "--branch", "--untracked-files=normal", "--ignore-submodules=dirty")
+	out, err := r.Run(ctx, path, "status", "--porcelain=v2", "--branch", "--untracked-files=normal", "--ignore-submodules=dirty")
 	if err != nil {
 		return nil, err
 	}

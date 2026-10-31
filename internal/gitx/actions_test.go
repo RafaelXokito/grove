@@ -210,3 +210,145 @@ func TestActionsFixture(t *testing.T) {
 		}
 	})
 }
+
+func TestAddRemoveArgs(t *testing.T) {
+	ctx := context.Background()
+	r := &recRunner{}
+	_ = AddWorktree(ctx, r, "/x/repo", "/x/wt", "feat", true)
+	_ = AddWorktree(ctx, r, "/x/repo", "/x/wt", "feat", false)
+	_ = RemoveWorktree(ctx, r, "/x/repo", "/x/wt", 0)
+	_ = RemoveWorktree(ctx, r, "/x/repo", "/x/wt", 1)
+	_ = RemoveWorktree(ctx, r, "/x/repo", "/x/wt", 2)
+	_ = DeleteBranch(ctx, r, "/x/repo", "feat")
+	want := []string{
+		"/x/repo: worktree add -b feat -- /x/wt",
+		"/x/repo: worktree add -- /x/wt feat",
+		"/x/repo: worktree remove -- /x/wt",
+		"/x/repo: worktree remove --force -- /x/wt",
+		"/x/repo: worktree remove --force --force -- /x/wt",
+		"/x/repo: branch -d -- feat",
+	}
+	if fmt.Sprint(r.calls) != fmt.Sprint(want) {
+		t.Errorf("calls:\n%q\nwant:\n%q", r.calls, want)
+	}
+	n := len(r.calls)
+	if AddWorktree(ctx, r, "/x/repo", "/x/wt", "-b", true) == nil ||
+		AddWorktree(ctx, r, "/x/repo", "rel/wt", "feat", true) == nil ||
+		DeleteBranch(ctx, r, "/x/repo", "-D") == nil || DeleteBranch(ctx, r, "/x/repo", "") == nil {
+		t.Error("invalid input accepted")
+	}
+	if len(r.calls) != n {
+		t.Error("invalid input reached git")
+	}
+}
+
+func TestAddRemoveFixture(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	r := NewExecRunner()
+	root := tempDir(t)
+	repo := filepath.Join(root, "repo")
+	newRepo(t, repo)
+	git(t, repo, "branch", "existing")
+
+	count := func() int {
+		wts, err := ListWorktrees(ctx, r, repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(wts)
+	}
+
+	newWT := filepath.Join(root, "repo-new")
+	if err := AddWorktree(ctx, r, repo, newWT, "new", true); err != nil {
+		t.Fatalf("add new branch: %v", err)
+	}
+	if b := branchOf(t, newWT); b != "new" {
+		t.Errorf("new worktree on %q", b)
+	}
+	exWT := filepath.Join(root, "repo-existing")
+	if err := AddWorktree(ctx, r, repo, exWT, "existing", false); err != nil {
+		t.Fatalf("add existing branch: %v", err)
+	}
+	if b := branchOf(t, exWT); b != "existing" {
+		t.Errorf("existing worktree on %q", b)
+	}
+
+	t.Run("path exists", func(t *testing.T) {
+		busy := filepath.Join(root, "occupied")
+		if err := os.MkdirAll(busy, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(busy, "f"), "x")
+		if err := AddWorktree(ctx, r, repo, busy, "other", true); err == nil || !strings.Contains(err.Error(), "already exists") {
+			t.Errorf("err = %v", err)
+		}
+		if err := AddWorktree(ctx, r, repo, filepath.Join(busy, "f"), "other", true); err == nil || !strings.Contains(err.Error(), "already exists") {
+			t.Errorf("file path: err = %v", err)
+		}
+		if count() != 3 {
+			t.Error("worktree created")
+		}
+		if bs, _ := LocalBranches(ctx, r, repo); fmt.Sprint(bs) != "[existing main new]" {
+			t.Errorf("branch created: %v", bs)
+		}
+	})
+
+	t.Run("branch held elsewhere", func(t *testing.T) {
+		err := AddWorktree(ctx, r, repo, filepath.Join(root, "repo-dup"), "new", false)
+		if !IsBranchInUse(err) {
+			t.Errorf("err = %v, want branch-in-use", err)
+		}
+	})
+
+	t.Run("remove clean, delete merged branch", func(t *testing.T) {
+		if err := RemoveWorktree(ctx, r, repo, exWT, 0); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(exWT); !os.IsNotExist(err) {
+			t.Errorf("directory still there: %v", err)
+		}
+		if err := DeleteBranch(ctx, r, repo, "existing"); err != nil {
+			t.Errorf("delete merged branch: %v", err)
+		}
+	})
+
+	t.Run("remove dirty needs force, unmerged branch kept", func(t *testing.T) {
+		writeFile(t, filepath.Join(newWT, "wip.txt"), "wip")
+		git(t, newWT, "add", "wip.txt")
+		git(t, newWT, "commit", "-q", "-m", "unmerged")
+		writeFile(t, filepath.Join(newWT, "more.txt"), "dirty")
+		if err := RemoveWorktree(ctx, r, repo, newWT, 0); err == nil {
+			t.Fatal("dirty worktree removed without --force")
+		}
+		if err := RemoveWorktree(ctx, r, repo, newWT, 1); err != nil {
+			t.Fatal(err)
+		}
+		var ge *Error
+		if err := DeleteBranch(ctx, r, repo, "new"); !errors.As(err, &ge) || !strings.Contains(ge.Stderr, "not fully merged") {
+			t.Errorf("unmerged delete: %v", err)
+		}
+		if bs, _ := LocalBranches(ctx, r, repo); fmt.Sprint(bs) != "[main new]" {
+			t.Errorf("branches = %v", bs)
+		}
+	})
+
+	t.Run("remove locked needs double force", func(t *testing.T) {
+		lk := filepath.Join(root, "repo-locked")
+		if err := AddWorktree(ctx, r, repo, lk, "lk", true); err != nil {
+			t.Fatal(err)
+		}
+		if err := Lock(ctx, r, repo, lk, "keep"); err != nil {
+			t.Fatal(err)
+		}
+		if err := RemoveWorktree(ctx, r, repo, lk, 1); err == nil {
+			t.Fatal("locked worktree removed with a single --force")
+		}
+		if err := RemoveWorktree(ctx, r, repo, lk, 2); err != nil {
+			t.Fatal(err)
+		}
+		if count() != 1 {
+			t.Errorf("%d worktrees left", count())
+		}
+	})
+}

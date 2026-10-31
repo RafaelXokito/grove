@@ -201,6 +201,13 @@ func (m *Model) footer(w int) []string {
 		if d.kind == dlgInput {
 			out = append(out, d.input.View())
 		}
+		if t := d.toggle; t != nil {
+			mark := "[ ]"
+			if t.on {
+				mark = "[x]"
+			}
+			out = append(out, sanitize(mark+" "+t.label))
+		}
 		out = append(out, styleDim.Render(sanitize(d.hint)))
 	}
 	return out

@@ -39,6 +39,7 @@ type liveTickMsg struct{}
 type liveLoadedMsg struct {
 	procs []sessions.LiveProc
 	err   error
+	once  bool // an extra poll after an action: does not re-arm the tick
 }
 
 // spinTickMsg advances the loading spinner.
@@ -106,6 +107,16 @@ func loadSessions(ctx context.Context, gen int, srcs []sessions.Source, since ti
 
 // liveTimeout bounds one live poll.
 const liveTimeout = 4 * time.Second
+
+// pollLiveOnce is pollLive for an out-of-band refresh (after an action).
+func pollLiveOnce(ctx context.Context, pl sessions.ProcLister) tea.Cmd {
+	poll := pollLive(ctx, pl)
+	return func() tea.Msg {
+		msg := poll().(liveLoadedMsg)
+		msg.once = true
+		return msg
+	}
+}
 
 func pollLive(ctx context.Context, pl sessions.ProcLister) tea.Cmd {
 	return func() tea.Msg {

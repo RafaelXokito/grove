@@ -3,6 +3,9 @@ package gitx
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -128,4 +131,66 @@ func IsBranchInUse(err error) bool {
 	}
 	return strings.Contains(ge.Stderr, "is already used by worktree at") ||
 		strings.Contains(ge.Stderr, "is already checked out at")
+}
+
+// validRef rejects empty and option-like names before they reach git.
+func validRef(kind, name string) error {
+	if name == "" || strings.HasPrefix(name, "-") {
+		return errors.New("invalid " + kind + ` "` + name + `"`)
+	}
+	return nil
+}
+
+// AddWorktree creates a worktree at the absolute path (`git -C <repo>
+// worktree add`). With newBranch it creates branch from the current HEAD of
+// repo (`-b <branch> -- <path>`); otherwise it checks out the existing
+// branch (`-- <path> <branch>`). a non-empty existing path is refused before
+// running git; git refuses a branch checked out in another worktree.
+func AddWorktree(ctx context.Context, r Runner, repo, path, branch string, newBranch bool) error {
+	if err := validRef("branch name", branch); err != nil {
+		return err
+	}
+	if !filepath.IsAbs(path) {
+		return errors.New("worktree path must be absolute: " + path)
+	}
+	// git creates the -b branch before noticing the path is taken, leaving a
+	// stray branch behind; refuse a non-empty path up front instead.
+	if fi, err := os.Stat(path); err == nil {
+		if !fi.IsDir() {
+			return fmt.Errorf("'%s' already exists", path)
+		}
+		if ents, _ := os.ReadDir(path); len(ents) > 0 {
+			return fmt.Errorf("'%s' already exists and is not empty", path)
+		}
+	}
+	args := []string{"worktree", "add"}
+	if newBranch {
+		args = append(args, "-b", branch, "--", path)
+	} else {
+		args = append(args, "--", path, branch)
+	}
+	_, err := r.Run(ctx, repo, args...)
+	return err
+}
+
+// RemoveWorktree removes the worktree at path (`git -C <repo> worktree remove
+// [--force [--force]] -- <path>`). force is the number of --force flags: 1
+// discards uncommitted changes, 2 also overrides a lock (git's rule).
+func RemoveWorktree(ctx context.Context, r Runner, repo, path string, force int) error {
+	args := []string{"worktree", "remove"}
+	for i := 0; i < force && i < 2; i++ {
+		args = append(args, "--force")
+	}
+	_, err := r.Run(ctx, repo, append(args, "--", path)...)
+	return err
+}
+
+// DeleteBranch safely deletes a local branch (`git -C <repo> branch -d --
+// <branch>`); git refuses if it is not fully merged. Never -D.
+func DeleteBranch(ctx context.Context, r Runner, repo, branch string) error {
+	if err := validRef("branch name", branch); err != nil {
+		return err
+	}
+	_, err := r.Run(ctx, repo, "branch", "-d", "--", branch)
+	return err
 }

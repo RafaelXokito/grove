@@ -95,6 +95,7 @@ type Model struct {
 	msgErr        bool              // message is an error (rendered as such)
 	dialog        *dialog           // open confirm/input prompt, if any
 	busy          map[string]string // worktree path or "r:"+repo path -> running action label
+	selectPath    string            // worktree to put the cursor on once its repo reloads
 	cursorMoved   bool              // the user moved the cursor; until then it stays on the top row
 	homeCanon     string            // canonical Home, for ~ abbreviation of canonical paths
 	rootsCanon    []string
@@ -296,6 +297,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.upsertRepo(msg.repo)
 		m.rebuild()
+		m.selectPending(msg.repo)
 		return m, m.requestBind()
 
 	case liveTickMsg:
@@ -307,6 +309,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case liveLoadedMsg:
 		m.procs = msg.procs
 		m.liveErr = msg.err
+		if msg.once {
+			return m, m.requestBind()
+		}
 		return m, tea.Batch(m.requestBind(), m.liveTick())
 
 	case bindMsg:
@@ -398,6 +403,10 @@ func (m *Model) dispatchKey(msg tea.KeyMsg) tea.Cmd {
 		return m.lock()
 	case key.Matches(msg, k.Prune):
 		return m.prune()
+	case key.Matches(msg, k.New):
+		return m.newWorktree()
+	case key.Matches(msg, k.Remove):
+		return m.remove()
 	case key.Matches(msg, k.Actions):
 		return m.action(msg)
 	}

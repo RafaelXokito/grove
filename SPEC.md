@@ -134,17 +134,23 @@ Prompt for a branch name, prefilled with the last branch known for this worktree
 - Given the branch is checked out in another worktree, Then git's error is shown verbatim and nothing changes, and the message names the worktree holding it (from FR-2 data) with hint "press d there to detach".
 
 ### FR-11 New worktree (`n`)
-Two-field form: path (default `<repo-parent>/<repo>-<branch>`), branch.
-- If branch exists locally: `git worktree add <path> <branch>`; else `git worktree add -b <branch> <path>` (from current HEAD of main worktree).
+Two prompts in turn: branch (tab-completes local branches), then path (default `<repo-parent>/<repo>-<branch-slug>`, shown with `~`; relative paths resolve against the repo's parent).
+- If branch exists locally: `git worktree add -- <abs-path> <branch>`; else `git worktree add -b <branch> -- <abs-path>` (from current HEAD of main worktree).
+- Given an existing branch checked out in another worktree, Then the in-use message naming the holder ("press d there to detach") is shown before the path prompt.
 - Given valid input, Then the new worktree appears in the tree selected.
-- Given the path exists and is non-empty, Then git's error is shown and nothing is created.
+- Given the path exists and is non-empty (or is a file), Then it is refused before running git (git would create the `-b` branch before failing) and nothing is created.
+- Given the path equals or is inside any known repo/worktree path (canonical, case-folded on darwin), Then it is refused with a clear message.
 
 ### FR-12 Remove worktree (`x`)
 - Never allowed on the main worktree: Given main worktree selected, When `x`, Then show "cannot remove the main worktree" and run nothing.
-- Clean, not live, not locked: confirm dialog → `git worktree remove <path>`.
-- Dirty and/or live and/or locked: **not blocked**; the dialog spells out each risk ("3 uncommitted changes will be LOST", "a claude agent is running here (busy)", "worktree is locked: <reason>") and confirms with a single `y`. Then `git worktree remove --force [--force if locked] <path>`.
+- On `x` a fresh `git status` of the worktree runs (in a `tea.Cmd`) before the dialog opens; risks come from it plus the current live/lock state. A failed status counts as dirty ("status unknown — uncommitted changes may be LOST").
+- Clean, not live, not locked: confirm dialog → `git worktree remove -- <path>`.
+- Dirty/unknown and/or live and/or locked: **not blocked**; the dialog spells out each risk ("3 uncommitted changes will be LOST", "a claude agent is running here (busy)", "worktree is locked: <reason>") and confirms with a single `y`.
+- Force rules: one `--force` only when there are (or may be) uncommitted changes; `--force --force` when locked (git's rule). A live agent alone is a risk line only and adds no `--force`.
+- Re-check: on `y`, if the worktree became live or locked since the dialog opened, or (immediately before removing) a fresh status shows more changes than at open, the remove is aborted with "worktree changed since confirmation — press x again".
+- After a remove the live state is re-polled once so live counts update.
 - Branches are **never deleted by default**. The dialog has an optional toggle (`b`, default off) "also delete branch `<name>`"; when on, after a successful remove run `git -C <repo> branch -d <name>` (safe delete; if git refuses because unmerged, show its error, no `-D`). Hidden for detached worktrees.
-- Given cancel (`esc`/`n`), Then no git command runs (verified via the command runner fake).
+- Given cancel (`esc`/`n`), Then no mutating git command runs (only the read-only status check; verified via the command runner fake).
 
 ### FR-13 Prune (`p`)
 Runs `git -C <repo> worktree prune --dry-run -v` first; shows the list; on confirm runs `git worktree prune -v`.
@@ -333,7 +339,7 @@ AC: model tests with fake runner assert exact git args; integration test detachi
 
 **T9 — New + remove worktree with risk confirmation** (FR-11, FR-12)
 Two-field form; risk dialog (single `y`) with delete-branch toggle.
-AC: main worktree `x` → message, zero runner calls; dirty+live remove dialog lists both risks; cancel → zero runner calls; confirm → `worktree remove --force`, no `branch` call; toggle on → `branch -d <name>` after remove; new worktree with new and existing branch both work on fixture repo.
+AC: main worktree `x` → message, zero runner calls; dirty+live remove dialog lists both risks; cancel → no mutating runner calls; live+clean → plain `worktree remove`; changes growing after the dialog opened → aborted; confirm → `worktree remove --force`, no `branch` call; toggle on → `branch -d <name>` after remove; new worktree with new and existing branch both work on fixture repo.
 
 **T10 — Details pane + open** (FR-15, FR-16)
 Async details load, pane layout, `tea.ExecProcess` for open.

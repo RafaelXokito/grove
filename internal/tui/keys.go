@@ -9,7 +9,8 @@ type keyMap struct {
 	Collapse, Expand, Toggle              key.Binding
 	Enter, Refresh, Quit                  key.Binding
 	Detach, Checkout, Lock, Prune         key.Binding
-	// Actions are the keys implemented by later tasks (T9–T11); they are
+	New, Remove                           key.Binding
+	// Actions are the keys implemented by later tasks (T10–T11); they are
 	// routed to Model.action.
 	Actions key.Binding
 }
@@ -32,6 +33,8 @@ func defaultKeys() keyMap {
 		Checkout: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "checkout")),
 		Lock:     key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "lock/unlock")),
 		Prune:    key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "prune")),
-		Actions:  key.NewBinding(key.WithKeys("n", "x", "o", "/", "?")),
+		New:      key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new worktree")),
+		Remove:   key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "remove worktree")),
+		Actions:  key.NewBinding(key.WithKeys("o", "/", "?")),
 	}
 }

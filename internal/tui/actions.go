@@ -39,8 +39,17 @@ type dialog struct {
 	lines []string // title first, then notes (plain text)
 	input textinput.Model
 	hint  string
-	// ok runs on confirmation (y / enter) with the input value.
+	// ok runs on confirmation (y / enter) with the input value; for a
+	// confirm dialog with a toggle, the value is toggle.on as "on" or "".
 	ok func(value string) tea.Cmd
+	// toggle is an optional on/off option of a confirm dialog, flipped by
+	// its key (e.g. `b` = also delete branch).
+	toggle *dialogToggle
+}
+
+type dialogToggle struct {
+	key, label string
+	on         bool
 }
 
 // actionFunc performs a git action and returns the success message.
@@ -52,6 +61,9 @@ type actionDoneMsg struct {
 	repo string
 	ok   string
 	err  error
+	// selectPath, if set, is the worktree the cursor moves to after the
+	// reload (a newly created worktree).
+	selectPath string
 }
 
 // branchesMsg delivers the checkout prompt's data.
@@ -105,10 +117,18 @@ func (m *Model) dialogKey(msg tea.KeyMsg) tea.Cmd {
 		switch msg.String() {
 		case "y", "Y":
 			m.dialog = nil
-			return d.ok("")
+			v := ""
+			if d.toggle != nil && d.toggle.on {
+				v = "on"
+			}
+			return d.ok(v)
 		case "n", "N":
 			m.dialog = nil
 			m.setMessage("cancelled")
+		default:
+			if t := d.toggle; t != nil && msg.String() == t.key {
+				t.on = !t.on
+			}
 		}
 		return nil
 	default:
@@ -181,15 +201,40 @@ func (m *Model) handleActionMsg(msg tea.Msg) (tea.Cmd, bool) {
 			m.setError(errSummary(msg.err))
 		} else {
 			m.setMessage(msg.ok)
+			m.selectPath = msg.selectPath
 		}
 		m.ensureVisible()
-		return m.reloadRepo(msg.repo), true
+		cmds := []tea.Cmd{m.reloadRepo(msg.repo)}
+		if m.deps.Procs != nil {
+			// Refresh live state now (e.g. an agent in a removed worktree);
+			// a one-shot poll that does not re-arm the live tick.
+			cmds = append(cmds, pollLiveOnce(m.ctx, m.deps.Procs))
+		}
+		return tea.Batch(cmds...), true
 	case branchesMsg:
 		delete(m.busy, msg.wtPath)
 		if m.dialog != nil {
 			m.setMessage("checkout: another prompt is open, press c again")
 		} else {
 			m.openCheckout(msg)
+		}
+		m.ensureVisible()
+		return nil, true
+	case newBranchesMsg:
+		delete(m.busy, "r:"+msg.repo)
+		if m.dialog != nil {
+			m.setMessage("new worktree: another prompt is open, press n again")
+		} else {
+			m.openNewBranch(msg)
+		}
+		m.ensureVisible()
+		return nil, true
+	case removeCheckMsg:
+		delete(m.busy, msg.path)
+		if m.dialog != nil {
+			m.setMessage("remove: another prompt is open, press x again")
+		} else {
+			m.openRemove(msg)
 		}
 		m.ensureVisible()
 		return nil, true
