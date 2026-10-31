@@ -324,7 +324,8 @@ AC: registry tests (alive busy, alive idle, dead PID ignored, malformed file ski
 
 **T7 — TUI skeleton: tree list + loading** (FR-7, FR-18, FR-19 `r`, FR-21)
 Model, messages, flattened rows, collapse/expand, navigation, spinner, status line, `q`, `r`.
-AC: model tests: first `View()` before any msgs shows spinner; after `repoFoundMsg`+`worktreesMsg`+`sessionsLoadedMsg` the view contains branch, `dirty (n)`, session short id, relative time, busy/idle marker; `←`/`→` collapse/expand; 80-col no-wrap check; live tick does not trigger git calls.
+AC: model tests: first `View()` before any msgs shows spinner; after `scanEventMsg`+`sessionsLoadedMsg` the view contains branch, `dirty (n)`, session short id, relative time, busy/idle marker; `←`/`→` collapse/expand; 80-col no-wrap check; live tick does not trigger git calls.
+Note: `scan.Scan` streams each repo with its worktrees and status already loaded, so a single `scanEventMsg` (one `tea.Cmd` per event, re-armed) replaces the `repoFoundMsg`+`worktreesMsg` pair of §3.3; per-repo reloads use `scan.LoadRepo` → `repoLoadedMsg`.
 
 **T8 — Simple actions: detach, checkout, lock/unlock, prune** (FR-8, FR-9, FR-10, FR-13, FR-14)
 Confirm dialog component (single-key y/n), text-input prompt, action cmds, per-repo refresh after action.
