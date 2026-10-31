@@ -92,8 +92,11 @@ type Model struct {
 	spinFrame     int
 	spinning      bool
 	message       string
-	cursorMoved   bool   // the user moved the cursor; until then it stays on the top row
-	homeCanon     string // canonical Home, for ~ abbreviation of canonical paths
+	msgErr        bool              // message is an error (rendered as such)
+	dialog        *dialog           // open confirm/input prompt, if any
+	busy          map[string]string // worktree path or "r:"+repo path -> running action label
+	cursorMoved   bool              // the user moved the cursor; until then it stays on the top row
+	homeCanon     string            // canonical Home, for ~ abbreviation of canonical paths
 	rootsCanon    []string
 	keys          keyMap
 }
@@ -136,6 +139,7 @@ func New(d Deps) *Model {
 		sessLoading: len(d.Sources) > 0,
 		collapsed:   map[string]bool{},
 		showAll:     map[string]bool{},
+		busy:        map[string]string{},
 		skipped:     map[sessions.Agent]int{},
 		keys:        defaultKeys(),
 	}
@@ -239,7 +243,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case spinTickMsg:
 		m.spinFrame++
-		if m.loading() {
+		if m.loading() || len(m.busy) > 0 {
 			return m, m.spinTick()
 		}
 		m.spinning = false
@@ -319,6 +323,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if cmd, ok := m.handleActionMsg(msg); ok {
+		return m, cmd
+	}
 	return m, nil
 }
 
@@ -336,8 +343,13 @@ func (m *Model) upsertRepo(r *scan.Repo) {
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
-	m.message = ""
-	cmd := m.dispatchKey(msg)
+	m.setMessage("")
+	var cmd tea.Cmd
+	if m.dialog != nil {
+		cmd = m.dialogKey(msg)
+	} else {
+		cmd = m.dispatchKey(msg)
+	}
 	m.ensureVisible() // the message line changes the body height
 	return cmd
 }
@@ -378,14 +390,22 @@ func (m *Model) dispatchKey(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 		return m.action(msg)
+	case key.Matches(msg, k.Detach):
+		return m.detach()
+	case key.Matches(msg, k.Checkout):
+		return m.checkout()
+	case key.Matches(msg, k.Lock):
+		return m.lock()
+	case key.Matches(msg, k.Prune):
+		return m.prune()
 	case key.Matches(msg, k.Actions):
 		return m.action(msg)
 	}
 	return nil
 }
 
-// action is the hook for worktree actions, details, filter and help
-// (T8–T11). Not implemented in the T7 skeleton.
+// action is the hook for the remaining actions, details, filter and help
+// (T9–T11). Not implemented yet.
 func (m *Model) action(msg tea.KeyMsg) tea.Cmd {
 	m.message = fmt.Sprintf("%s: not implemented yet", msg.String())
 	return nil

@@ -36,6 +36,8 @@ var (
 	styleErr      = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Faint(true)
 	styleSelected = lipgloss.NewStyle().Reverse(true)
 	styleStatus   = lipgloss.NewStyle().Faint(true)
+	styleMsgErr   = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	styleBusy     = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
 )
 
 type rowKind int
@@ -147,9 +149,7 @@ func (m *Model) bodyHeight() int {
 		h = defaultHeight
 	}
 	h -= 2 // header + status line
-	if m.message != "" {
-		h--
-	}
+	h -= len(m.footer(m.w()))
 	if h < 1 {
 		h = 1
 	}
@@ -165,12 +165,45 @@ func (m *Model) View() string {
 
 	body := m.body(w)
 	b.WriteString(body)
-	if m.message != "" {
-		b.WriteString(fit(styleDim.Render(m.message), w))
+	for _, l := range m.footer(w) {
+		b.WriteString(fit(l, w))
 		b.WriteByte('\n')
 	}
 	b.WriteString(fit(styleStatus.Render(m.statusLine()), w))
 	return b.String()
+}
+
+// footer returns the lines between the tree and the status line: the
+// (wrapped) message, then the open dialog if any.
+func (m *Model) footer(w int) []string {
+	var out []string
+	if m.message != "" {
+		style := styleDim
+		if m.msgErr {
+			style = styleMsgErr
+		}
+		lines := strings.Split(ansi.Wrap(m.message, w, " "), "\n")
+		if len(lines) > maxMessageLines {
+			lines = lines[:maxMessageLines]
+		}
+		for _, l := range lines {
+			out = append(out, style.Render(l))
+		}
+	}
+	if d := m.dialog; d != nil {
+		for i, l := range d.lines {
+			l = sanitize(l)
+			if i == 0 {
+				l = styleHeader.Render(l)
+			}
+			out = append(out, l)
+		}
+		if d.kind == dlgInput {
+			out = append(out, d.input.View())
+		}
+		out = append(out, styleDim.Render(sanitize(d.hint)))
+	}
+	return out
 }
 
 func (m *Model) header() string {
@@ -247,6 +280,9 @@ func (m *Model) renderRow(r row, w int) string {
 		if r.repo.Err != nil {
 			s += "  " + styleErr.Render("!")
 		}
+		if l := m.busy["r:"+r.repo.Path]; l != "" {
+			s += "  " + styleBusy.Render(m.spinner()+" "+l+"…")
+		}
 		return fit(s, w)
 	case rowWorktree:
 		prefix := indent + m.marker(r)
@@ -316,6 +352,9 @@ func (m *Model) worktreeText(wt *gitx.Worktree, w int) string {
 	}
 	if m.bound.liveWT[wt.Path] {
 		parts = append(parts, styleLive.Render("●"))
+	}
+	if l := m.busy[wt.Path]; l != "" {
+		parts = append(parts, styleBusy.Render(m.spinner()+" "+l+"…"))
 	}
 	rest := strings.Join(parts, "  ")
 	path := sanitize(m.display(wt.Path))

@@ -21,6 +21,12 @@ type Runner interface {
 	Run(ctx context.Context, dir string, args ...string) (stdout []byte, err error)
 }
 
+// OutputRunner is an optional Runner extension that also returns stderr on
+// success, for commands that report on stderr (e.g. `worktree prune -v`).
+type OutputRunner interface {
+	RunOutput(ctx context.Context, dir string, args ...string) (stdout, stderr []byte, err error)
+}
+
 // Error is returned by ExecRunner when git exits unsuccessfully or cannot be
 // started. Stderr holds git's (trimmed) diagnostic output.
 type Error struct {
@@ -57,6 +63,12 @@ func NewExecRunner() *ExecRunner { return &ExecRunner{} }
 
 // Run implements Runner.
 func (r *ExecRunner) Run(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	out, _, err := r.RunOutput(ctx, dir, args...)
+	return out, err
+}
+
+// RunOutput implements OutputRunner.
+func (r *ExecRunner) RunOutput(ctx context.Context, dir string, args ...string) ([]byte, []byte, error) {
 	bin := r.Git
 	if bin == "" {
 		bin = "git"
@@ -82,12 +94,12 @@ func (r *ExecRunner) Run(ctx context.Context, dir string, args ...string) ([]byt
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			err = ctxErr
 		}
-		return stdout.Bytes(), &Error{
+		return stdout.Bytes(), stderr.Bytes(), &Error{
 			Dir:    dir,
 			Args:   append([]string(nil), args...),
 			Stderr: strings.TrimSpace(stderr.String()),
 			Err:    err,
 		}
 	}
-	return stdout.Bytes(), nil
+	return stdout.Bytes(), stderr.Bytes(), nil
 }

@@ -106,7 +106,7 @@ Polled every 5 s (`live_interval`), independently of the full rescan (FR-19).
 | `↑`/`↓`, `k`/`j` | move |
 | `←` / `→`, `space` | collapse / expand (toggle) |
 | `enter` | details pane (FR-15) |
-| `d` | detach HEAD (FR-9) |
+| `d` | detach HEAD immediately; y/n confirm only if a live agent is in the worktree (FR-9) |
 | `c` | checkout/reattach branch (FR-10) |
 | `n` | new worktree (FR-11) |
 | `x` | remove worktree (FR-12) |
@@ -122,15 +122,15 @@ Polled every 5 s (`live_interval`), independently of the full rescan (FR-19).
 - `h` is unbound (no vim-style horizontal navigation); `←` on an expanded node collapses it, on a collapsed/leaf node moves to its parent.
 
 ### FR-9 Detach HEAD (`d`)
-Runs `git -C <wt> checkout --detach`.
-- Given worktree on `feat`, When `d` then confirm `y`, Then HEAD is detached at the same commit and branch `feat` can now be checked out elsewhere; the row refreshes.
-- Given the worktree is dirty, Then the confirmation additionally says "Uncommitted changes stay in this worktree."
-- Given the worktree is live, Then the confirmation says "An agent is running here; it will now be on a detached HEAD."
+Runs `git -C <wt> checkout --detach`. Detaches immediately (no dialog) unless a live agent is bound to the worktree; only then a y/n confirmation is shown.
+- Given worktree on `feat` and no live agent, When `d`, Then HEAD is detached at the same commit and branch `feat` can now be checked out elsewhere; the row refreshes.
+- Given the worktree is live, Then `d` asks for confirmation, saying "An agent is running here; it will now be on a detached HEAD." (plus "Uncommitted changes stay in this worktree." if dirty).
+- Given the worktree is dirty, Then the detach still runs and the status message notes the uncommitted changes were kept.
 - Given already detached, Then show "already detached" and do nothing.
 
 ### FR-10 Checkout / reattach branch (`c`)
 Prompt for a branch name, prefilled with the last branch known for this worktree (from reflog `git reflog -1 --grep-reflog`, best-effort) or empty; tab-completes from local branches.
-- Runs `git -C <wt> checkout <branch>`.
+- Runs `git -C <wt> checkout <branch> --` (the `--` keeps a name that matches a file from being treated as a pathspec); names that are not local branches are rejected before running git.
 - Given the branch is checked out in another worktree, Then git's error is shown verbatim and nothing changes, and the message names the worktree holding it (from FR-2 data) with hint "press d there to detach".
 
 ### FR-11 New worktree (`n`)

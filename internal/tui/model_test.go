@@ -159,6 +159,10 @@ func (h *harness) key(t *testing.T, k string) {
 		msg = tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
 	case "ctrl+c":
 		msg = tea.KeyMsg{Type: tea.KeyCtrlC}
+	case "esc":
+		msg = tea.KeyMsg{Type: tea.KeyEsc}
+	case "tab":
+		msg = tea.KeyMsg{Type: tea.KeyTab}
 	default:
 		msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
 	}
@@ -367,7 +371,7 @@ func TestNavigationCollapseExpand(t *testing.T) {
 func TestActionKeysAreStubs(t *testing.T) {
 	h := newHarness(t, fixtureRepos(), nil, nil)
 	h.settle(t, h.m.Init())
-	h.key(t, "d")
+	h.key(t, "o")
 	if !strings.Contains(h.view(), "not implemented") {
 		t.Errorf("no stub message:\n%s", h.view())
 	}
