@@ -45,6 +45,8 @@ type Deps struct {
 	HistoryDays int
 	// LiveInterval is the live poll period; 0 means DefaultLiveInterval.
 	LiveInterval time.Duration
+	// Warnings (e.g. unknown config keys) are shown in the status line.
+	Warnings []string
 
 	// Test seams; nil means the real implementation.
 	Scan func(context.Context, scan.Options) <-chan scan.Event

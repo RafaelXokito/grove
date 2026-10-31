@@ -662,3 +662,12 @@ func TestDisplayCanonicalHome(t *testing.T) {
 		t.Errorf("display = %q", got)
 	}
 }
+
+func TestConfigWarningsInStatusLine(t *testing.T) {
+	h := newHarness(t, nil, nil, nil)
+	h.m.deps.Warnings = []string{`config /c.toml: unknown key "bogus" ignored`}
+	h.send(t, tea.WindowSizeMsg{Width: 200, Height: 20})
+	if v := h.view(); !strings.Contains(v, `warning: config /c.toml: unknown key "bogus" ignored`) {
+		t.Errorf("status line missing warning:\n%s", v)
+	}
+}

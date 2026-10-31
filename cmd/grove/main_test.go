@@ -2,18 +2,32 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/RafaelXokito/grove/internal/tui"
 )
 
-func TestRun(t *testing.T) {
+// isolate points home/env at a temp dir so tests never read the real config,
+// and captures runTUI launches.
+func isolate(t *testing.T, envm map[string]string) (string, *[]tui.Deps) {
+	t.Helper()
+	h := t.TempDir()
 	var launched []tui.Deps
-	orig := runTUI
+	origTUI, origEnv, origHome := runTUI, getenv, home
 	runTUI = func(d tui.Deps) error { launched = append(launched, d); return nil }
-	t.Cleanup(func() { runTUI = orig })
+	getenv = func(k string) string { return envm[k] }
+	home = func() string { return h }
+	t.Cleanup(func() { runTUI, getenv, home = origTUI, origEnv, origHome })
+	return h, &launched
+}
 
+func TestRun(t *testing.T) {
+	isolate(t, nil)
 	tests := []struct {
 		name     string
 		args     []string
@@ -25,6 +39,7 @@ func TestRun(t *testing.T) {
 		{"help", []string{"--help"}, 0, ""},
 		{"unknown flag", []string{"--nope"}, 2, ""},
 		{"positional arg", []string{"extra"}, 2, ""},
+		{"negative history", []string{"--history-days", "-1"}, 2, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -36,33 +51,89 @@ func TestRun(t *testing.T) {
 			if out.String() != tt.wantOut {
 				t.Errorf("stdout = %q, want %q", out.String(), tt.wantOut)
 			}
-			if tt.name == "help" && !strings.Contains(errOut.String(), "-version") {
-				t.Errorf("help output missing -version: %q", errOut.String())
+			if tt.name == "help" {
+				for _, s := range []string{"-version", "-root", "GROVE_ROOT", "config.toml"} {
+					if !strings.Contains(errOut.String(), s) {
+						t.Errorf("help output missing %q: %q", s, errOut.String())
+					}
+				}
 			}
 		})
 	}
 }
 
 func TestRunLaunchesTUIWithDefaults(t *testing.T) {
-	var got []tui.Deps
-	orig := runTUI
-	runTUI = func(d tui.Deps) error { got = append(got, d); return nil }
-	t.Cleanup(func() { runTUI = orig })
-
+	h, got := isolate(t, nil)
 	if code := run(nil, &bytes.Buffer{}, &bytes.Buffer{}); code != 0 {
 		t.Fatalf("code = %d", code)
 	}
-	if len(got) != 1 {
-		t.Fatalf("runTUI called %d times", len(got))
+	if len(*got) != 1 {
+		t.Fatalf("runTUI called %d times", len(*got))
 	}
-	d := got[0]
-	if len(d.Roots) != 1 || !strings.HasSuffix(d.Roots[0], "Documents/repos") {
+	d := (*got)[0]
+	if !reflect.DeepEqual(d.Roots, []string{filepath.Join(h, "Documents", "repos")}) {
 		t.Errorf("Roots = %v", d.Roots)
 	}
-	if len(d.Sources) != 2 || d.Procs == nil || d.HistoryDays != 30 {
+	if len(d.Sources) != 2 || d.Procs == nil || d.HistoryDays != 30 || d.MaxDepth != 3 ||
+		d.LiveInterval != 5*time.Second || d.GitTimeout != 10*time.Second {
 		t.Errorf("deps = %+v", d)
 	}
-	if code := run([]string{"--version"}, &bytes.Buffer{}, &bytes.Buffer{}); code != 0 || len(got) != 1 {
+	if code := run([]string{"--version"}, &bytes.Buffer{}, &bytes.Buffer{}); code != 0 || len(*got) != 1 {
 		t.Errorf("--version launched the TUI")
+	}
+}
+
+func TestRunConfigPrecedence(t *testing.T) {
+	h, got := isolate(t, map[string]string{"GROVE_ROOT": "/env1,/env2"})
+	cfg := filepath.Join(h, ".config", "grove", "config.toml")
+	os.MkdirAll(filepath.Dir(cfg), 0o755)
+	os.WriteFile(cfg, []byte("roots = [\"/file\"]\nhistory_days = 7\nlive_interval = \"2s\"\nmax_depth = 0\nbogus = 1\n"), 0o644)
+
+	var errOut bytes.Buffer
+	if code := run(nil, &bytes.Buffer{}, &errOut); code != 0 {
+		t.Fatalf("code = %d (%s)", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), `unknown key "bogus"`) {
+		t.Errorf("no unknown-key warning: %q", errOut.String())
+	}
+	d := (*got)[0]
+	if len(d.Warnings) != 1 || !strings.Contains(d.Warnings[0], "bogus") {
+		t.Errorf("Deps.Warnings = %v", d.Warnings)
+	}
+	if !reflect.DeepEqual(d.Roots, []string{"/env1", "/env2"}) || d.HistoryDays != 7 ||
+		d.LiveInterval != 2*time.Second || d.MaxDepth != -1 {
+		t.Errorf("env/file deps = %+v", d)
+	}
+
+	if code := run([]string{"--root", "/a", "--root", "/b", "--history-days", "0", "--depth", "2"}, &bytes.Buffer{}, &bytes.Buffer{}); code != 0 {
+		t.Fatalf("code = %d", code)
+	}
+	d = (*got)[1]
+	if !reflect.DeepEqual(d.Roots, []string{"/a", "/b"}) || d.HistoryDays != 0 || d.MaxDepth != 2 {
+		t.Errorf("flag deps = %+v", d)
+	}
+
+	// warnings still printed when validation fails
+	os.WriteFile(cfg, []byte("history_days = -1\nbogus = 1\n"), 0o644)
+	errOut.Reset()
+	if code := run(nil, &bytes.Buffer{}, &errOut); code != 2 || !strings.Contains(errOut.String(), `unknown key "bogus"`) {
+		t.Errorf("invalid config: code = %d, stderr %q", code, errOut.String())
+	}
+
+	os.WriteFile(cfg, []byte("roots = \n"), 0o644)
+	errOut.Reset()
+	if code := run(nil, &bytes.Buffer{}, &errOut); code != 2 || !strings.Contains(errOut.String(), "config.toml") {
+		t.Errorf("bad TOML: code = %d, stderr %q", code, errOut.String())
+	}
+}
+
+func TestRunEmptyGroveRoot(t *testing.T) {
+	_, got := isolate(t, map[string]string{"GROVE_ROOT": " , "})
+	var errOut bytes.Buffer
+	if code := run(nil, &bytes.Buffer{}, &errOut); code != 2 || !strings.Contains(errOut.String(), "GROVE_ROOT: no roots") {
+		t.Errorf("code = %d, stderr %q", code, errOut.String())
+	}
+	if len(*got) != 0 {
+		t.Error("TUI launched with no roots")
 	}
 }

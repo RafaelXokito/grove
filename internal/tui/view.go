@@ -532,6 +532,9 @@ func (m *Model) statusLine() string {
 	if n := m.skipped[sessions.AgentCodex]; n > 0 {
 		parts = append(parts, fmt.Sprintf("codex: %d compressed session%s skipped", n, plural(n)))
 	}
+	for _, w := range m.deps.Warnings {
+		parts = append(parts, "warning: "+sanitize(w))
+	}
 	if isUnavailable(m.liveErr) {
 		parts = append(parts, "process detection unavailable")
 	}
