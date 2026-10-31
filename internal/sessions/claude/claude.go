@@ -343,3 +343,28 @@ func realPrompt(l *line) (string, bool) {
 	}
 	return text, true
 }
+
+// Detail implements sessions.Detailer: it re-reads at most HeadLimit bytes of
+// s.Path and returns the full first real prompt.
+func (s *Source) Detail(ctx context.Context, sess sessions.Session) (sessions.Detail, error) {
+	if err := ctx.Err(); err != nil {
+		return sessions.Detail{}, err
+	}
+	open := s.open
+	if open == nil {
+		open = os.Open
+	}
+	f, err := open(sess.Path)
+	if err != nil {
+		return sessions.Detail{}, err
+	}
+	defer f.Close()
+	head := make([]byte, HeadLimit+1)
+	n, err := io.ReadFull(f, head)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return sessions.Detail{}, fmt.Errorf("%s: %w", sess.Path, err)
+	}
+	truncated := n > HeadLimit
+	h := scanChunk(head[:min(n, HeadLimit)], false, truncated)
+	return sessions.Detail{Prompt: h.prompt}, nil
+}

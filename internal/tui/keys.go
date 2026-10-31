@@ -9,10 +9,20 @@ type keyMap struct {
 	Collapse, Expand, Toggle              key.Binding
 	Enter, Refresh, Quit                  key.Binding
 	Detach, Checkout, Lock, Prune         key.Binding
-	New, Remove                           key.Binding
-	// Actions are the keys implemented by later tasks (T10–T11); they are
-	// routed to Model.action.
-	Actions key.Binding
+	New, Remove, Open                     key.Binding
+	Filter, Help                          key.Binding
+}
+
+// all lists every binding in help order; the help overlay (`?`) renders
+// exactly this list, so it stays in sync with the bindings (a test checks
+// that every keyMap field is listed).
+func (k keyMap) all() []key.Binding {
+	return []key.Binding{
+		k.Up, k.Down, k.PageUp, k.PageDown, k.Home, k.End,
+		k.Collapse, k.Expand, k.Toggle, k.Enter,
+		k.Detach, k.Checkout, k.New, k.Remove, k.Prune, k.Lock, k.Open,
+		k.Refresh, k.Filter, k.Help, k.Quit,
+	}
 }
 
 func defaultKeys() keyMap {
@@ -35,6 +45,8 @@ func defaultKeys() keyMap {
 		Prune:    key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "prune")),
 		New:      key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new worktree")),
 		Remove:   key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "remove worktree")),
-		Actions:  key.NewBinding(key.WithKeys("o", "/", "?")),
+		Open:     key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open $GROVE_OPEN / $EDITOR / $SHELL")),
+		Filter:   key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter (esc clears)")),
+		Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	}
 }

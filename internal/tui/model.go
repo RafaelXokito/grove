@@ -7,10 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"sort"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/RafaelXokito/grove/internal/gitx"
@@ -47,6 +50,12 @@ type Deps struct {
 	Scan func(context.Context, scan.Options) <-chan scan.Event
 	Now  func() time.Time
 	Tick func(time.Duration, func(time.Time) tea.Msg) tea.Cmd
+	// Getenv reads $GROVE_OPEN, $EDITOR and $SHELL for `o`.
+	Getenv func(string) string
+	// Environ is the environment for the `o` process.
+	Environ func() []string
+	// Exec runs the `o` process with the TUI suspended (tea.ExecProcess).
+	Exec func(*exec.Cmd, tea.ExecCallback) tea.Cmd
 }
 
 // Model is the root Bubble Tea model. Use it through a pointer.
@@ -100,6 +109,12 @@ type Model struct {
 	homeCanon     string            // canonical Home, for ~ abbreviation of canonical paths
 	rootsCanon    []string
 	keys          keyMap
+
+	overlay     *overlay // details or help pane, if open
+	detailsSeq  int
+	filter      string // active tree filter (FR-17); "" = none
+	filtering   bool   // the filter input has focus
+	filterInput textinput.Model
 }
 
 // New returns a Model ready to be started by Init.
@@ -112,6 +127,15 @@ func New(d Deps) *Model {
 	}
 	if d.Tick == nil {
 		d.Tick = tea.Tick
+	}
+	if d.Getenv == nil {
+		d.Getenv = os.Getenv
+	}
+	if d.Environ == nil {
+		d.Environ = os.Environ
+	}
+	if d.Exec == nil {
+		d.Exec = tea.ExecProcess
 	}
 	if d.LiveInterval <= 0 {
 		d.LiveInterval = DefaultLiveInterval
@@ -244,7 +268,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case spinTickMsg:
 		m.spinFrame++
-		if m.loading() || len(m.busy) > 0 {
+		if m.loading() || len(m.busy) > 0 || m.detailsLoading() {
 			return m, m.spinTick()
 		}
 		m.spinning = false
@@ -314,6 +338,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(m.requestBind(), m.liveTick())
 
+	case detailsMsg:
+		if o := m.overlay; o != nil && o.kind == ovDetails && o.details.seq == msg.seq {
+			o.details.loading = false
+			o.details.data = msg.data
+		}
+		return m, nil
+
+	case openDoneMsg:
+		var exitErr *exec.ExitError
+		if msg.what == "$SHELL" && errors.As(msg.err, &exitErr) {
+			msg.err = nil // a shell's exit status is the last command's, not a failure
+		}
+		if msg.err != nil {
+			m.setError(fmt.Sprintf("%s in %s: %v", msg.what, m.display(msg.path), msg.err))
+		} else {
+			m.setMessage(fmt.Sprintf("back from %s in %s", msg.what, m.display(msg.path)))
+		}
+		m.ensureVisible()
+		return m, m.reloadRepo(msg.repo)
+
 	case bindMsg:
 		if msg.seq != m.bindSeq {
 			return m, nil
@@ -350,9 +394,14 @@ func (m *Model) upsertRepo(r *scan.Repo) {
 func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 	m.setMessage("")
 	var cmd tea.Cmd
-	if m.dialog != nil {
+	switch {
+	case m.dialog != nil:
 		cmd = m.dialogKey(msg)
-	} else {
+	case m.filtering:
+		cmd = m.filterKey(msg)
+	case m.overlay != nil:
+		cmd = m.overlayKey(msg)
+	default:
 		cmd = m.dispatchKey(msg)
 	}
 	m.ensureVisible() // the message line changes the body height
@@ -394,7 +443,7 @@ func (m *Model) dispatchKey(msg tea.KeyMsg) tea.Cmd {
 			m.rebuild()
 			return nil
 		}
-		return m.action(msg)
+		return m.details()
 	case key.Matches(msg, k.Detach):
 		return m.detach()
 	case key.Matches(msg, k.Checkout):
@@ -407,17 +456,21 @@ func (m *Model) dispatchKey(msg tea.KeyMsg) tea.Cmd {
 		return m.newWorktree()
 	case key.Matches(msg, k.Remove):
 		return m.remove()
-	case key.Matches(msg, k.Actions):
-		return m.action(msg)
+	case key.Matches(msg, k.Open):
+		return m.open()
+	case key.Matches(msg, k.Filter):
+		return m.startFilter()
+	case key.Matches(msg, k.Help):
+		m.overlay = &overlay{kind: ovHelp}
+	case msg.Type == tea.KeyEsc && m.filter != "":
+		m.setFilter("")
+		m.setMessage("filter cleared")
 	}
 	return nil
 }
 
-// action is the hook for the remaining actions, details, filter and help
-// (T9–T11). Not implemented yet.
-func (m *Model) action(msg tea.KeyMsg) tea.Cmd {
-	m.message = fmt.Sprintf("%s: not implemented yet", msg.String())
-	return nil
+func (m *Model) detailsLoading() bool {
+	return m.overlay != nil && m.overlay.kind == ovDetails && m.overlay.details.loading
 }
 
 func (m *Model) current() (row, bool) {
@@ -445,7 +498,7 @@ func (m *Model) clampCursor() {
 
 func (m *Model) setCollapsed(c bool) {
 	r, ok := m.current()
-	if !ok || !r.expandable || m.collapsed[r.key] == c {
+	if !ok || !r.expandable || r.forced || m.collapsed[r.key] == c {
 		return
 	}
 	m.collapsed[r.key] = c
@@ -459,7 +512,7 @@ func (m *Model) collapseOrParent() {
 	if !ok {
 		return
 	}
-	if r.expandable && !m.collapsed[r.key] {
+	if r.expandable && !r.forced && !m.collapsed[r.key] {
 		m.setCollapsed(true)
 		return
 	}
@@ -491,11 +544,15 @@ func (m *Model) rebuild() {
 	for i, r := range m.rows {
 		idx[r.key] = i
 	}
+	found := false
 	for _, k := range want {
 		if i, ok := idx[k]; ok {
-			m.cursor = i
+			m.cursor, found = i, true
 			break
 		}
+	}
+	if len(want) > 0 && !found {
+		m.cursor = 0 // nothing survived (e.g. filtered out): top row
 	}
 	m.clampCursor()
 	m.ensureVisible()

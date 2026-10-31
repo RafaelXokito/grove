@@ -443,3 +443,20 @@ func TestDefaultDir(t *testing.T) {
 		t.Errorf("default: %q %v", d, err)
 	}
 }
+
+func TestDetailPromptAndBranch(t *testing.T) {
+	f := newFixture(t)
+	long := strings.Repeat("codex prompt ", 20) + "END"
+	p := f.write(dayRel("019a0000-0000-7000-8000-00000000d001"), time.Time{},
+		meta("019a0000-0000-7000-8000-00000000d001", "/x/repo", nil),
+		userMsg(long), turnCtx("/x/repo"))
+	src := New(f.dir)
+	var _ sessions.Detailer = src
+	d, err := src.Detail(context.Background(), sessions.Session{Path: p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Prompt != long || d.GitBranch != "feat-x" {
+		t.Errorf("detail = %+v", d)
+	}
+}

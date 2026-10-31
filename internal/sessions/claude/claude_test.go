@@ -409,3 +409,28 @@ func TestGlobMetacharsInDir(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+func TestDetailFullPrompt(t *testing.T) {
+	f := newFixture(t)
+	long := strings.Repeat("word ", 60) + "END"
+	p := f.write("-x-repo/long.jsonl", time.Time{},
+		modeLine, aiTitle("short title"),
+		user("/x/repo", long, nil),
+		assistant("/x/repo", "ok"))
+	src := New(f.dir)
+	var _ sessions.Detailer = src
+	ss := f.list(time.Time{})
+	if got := []rune(ss["long"].Title); len(got) > sessions.TitleMaxRunes {
+		t.Fatalf("title not truncated: %d", len(got))
+	}
+	d, err := src.Detail(context.Background(), sessions.Session{Path: p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(d.Prompt) != strings.TrimSpace(long) {
+		t.Errorf("prompt = %q", d.Prompt)
+	}
+	if _, err := src.Detail(context.Background(), sessions.Session{Path: p + ".missing"}); err == nil {
+		t.Error("missing file: no error")
+	}
+}

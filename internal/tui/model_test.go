@@ -368,15 +368,6 @@ func TestNavigationCollapseExpand(t *testing.T) {
 	}
 }
 
-func TestActionKeysAreStubs(t *testing.T) {
-	h := newHarness(t, fixtureRepos(), nil, nil)
-	h.settle(t, h.m.Init())
-	h.key(t, "o")
-	if !strings.Contains(h.view(), "not implemented") {
-		t.Errorf("no stub message:\n%s", h.view())
-	}
-}
-
 func TestMoreRow(t *testing.T) {
 	var ss []sessions.Session
 	for i := range 8 {

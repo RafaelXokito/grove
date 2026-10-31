@@ -57,6 +57,7 @@ type row struct {
 	parent     int    // index of the parent row, -1 for top level
 	depth      int
 	expandable bool
+	forced     bool // shown expanded by the filter (a match below); not collapsible
 	repo       *scan.Repo
 	wt         *gitx.Worktree
 	wtPath     string // owning worktree (worktree, session, more and wt-error rows)
@@ -69,10 +70,32 @@ type row struct {
 // "unbound sessions" group would be appended here from m.bound.unbound.
 func (m *Model) flatten() []row {
 	var rows []row
+	f := m.treeFilter()
 	for _, repo := range m.repos {
 		rkey := "r:" + repo.Path
+		// Filter (FR-17): a matching node shows its whole subtree; a node
+		// with a match below is shown (and forced open) as its ancestor.
+		repoMatch := f.repo(repo)
+		wtMatch := map[string]bool{}
+		wtVisible := map[string]bool{}
+		anyBelow := false
+		for i := range repo.Worktrees {
+			wt := &repo.Worktrees[i]
+			wtMatch[wt.Path] = repoMatch || f.worktree(wt)
+			vis := wtMatch[wt.Path]
+			for j := range m.bound.byWT[wt.Path] {
+				if f.session(&m.bound.byWT[wt.Path][j]) {
+					vis = true
+				}
+			}
+			wtVisible[wt.Path] = vis
+			anyBelow = anyBelow || vis
+		}
+		if !repoMatch && !anyBelow {
+			continue
+		}
 		ri := len(rows)
-		rows = append(rows, row{kind: rowRepo, key: rkey, parent: -1, repo: repo})
+		rows = append(rows, row{kind: rowRepo, key: rkey, parent: -1, repo: repo, forced: f.active() && !repoMatch})
 		wtErrs := map[string][]string{}
 		var repoErrs []string
 		for _, e := range splitErr(repo.Err) {
@@ -90,30 +113,46 @@ func (m *Model) flatten() []row {
 			}
 		}
 		rows[ri].expandable = len(repo.Worktrees) > 0 || len(repoErrs) > 0
-		if m.collapsed[rkey] {
+		if m.collapsed[rkey] && (repoMatch || !f.active()) {
 			continue
+		}
+		if !repoMatch {
+			repoErrs = nil
 		}
 		for i, msg := range repoErrs {
 			rows = append(rows, row{kind: rowError, key: fmt.Sprintf("er:%s:%d", repo.Path, i), parent: ri, depth: 1, repo: repo, err: msg})
 		}
 		for i := range repo.Worktrees {
 			wt := &repo.Worktrees[i]
+			if !wtVisible[wt.Path] {
+				continue
+			}
 			wkey := "w:" + wt.Path
 			wi := len(rows)
 			ss := m.bound.byWT[wt.Path]
 			errs := wtErrs[wt.Path]
+			selfMatch := wtMatch[wt.Path]
+			if !selfMatch {
+				var keep []sessions.Session
+				for j := range ss {
+					if f.session(&ss[j]) {
+						keep = append(keep, ss[j])
+					}
+				}
+				ss, errs = keep, nil
+			}
 			rows = append(rows, row{
 				kind: rowWorktree, key: wkey, parent: ri, depth: 1, repo: repo, wt: wt, wtPath: wt.Path,
-				expandable: len(ss) > 0 || len(errs) > 0,
+				expandable: len(ss) > 0 || len(errs) > 0, forced: f.active() && !selfMatch,
 			})
-			if m.collapsed[wkey] {
+			if m.collapsed[wkey] && (selfMatch || !f.active()) {
 				continue
 			}
 			for j, msg := range errs {
 				rows = append(rows, row{kind: rowError, key: fmt.Sprintf("ew:%s:%d", wt.Path, j), parent: wi, depth: 2, repo: repo, wt: wt, wtPath: wt.Path, err: msg})
 			}
 			shown := ss
-			if len(ss) > maxSessionsShown && !m.showAll[wt.Path] {
+			if len(ss) > maxSessionsShown && !m.showAll[wt.Path] && !f.active() {
 				shown = ss[:maxSessionsShown]
 			}
 			for j := range shown {
@@ -164,12 +203,19 @@ func (m *Model) View() string {
 	b.WriteByte('\n')
 
 	body := m.body(w)
+	if m.overlay != nil {
+		body = m.overlayBody(w)
+	}
 	b.WriteString(body)
 	for _, l := range m.footer(w) {
 		b.WriteString(fit(l, w))
 		b.WriteByte('\n')
 	}
-	b.WriteString(fit(styleStatus.Render(m.statusLine()), w))
+	status := m.statusLine()
+	if m.overlay != nil {
+		status = m.overlayStatus()
+	}
+	b.WriteString(fit(styleStatus.Render(status), w))
 	return b.String()
 }
 
@@ -210,6 +256,9 @@ func (m *Model) footer(w int) []string {
 		}
 		out = append(out, styleDim.Render(sanitize(d.hint)))
 	}
+	if m.filtering {
+		out = append(out, m.filterInput.View(), styleDim.Render("type to filter · enter keep · esc clear"))
+	}
 	return out
 }
 
@@ -245,6 +294,8 @@ func (m *Model) body(w int) string {
 		var msg string
 		if m.loading() {
 			msg = m.spinner() + " Loading…"
+		} else if m.filter != "" {
+			msg = "No matches for filter " + fmt.Sprintf("%q", sanitize(m.filter)) + " (esc clears)."
 		} else {
 			msg = "No git repositories found."
 		}
@@ -271,7 +322,7 @@ func (m *Model) marker(r row) string {
 	if !r.expandable {
 		return "  "
 	}
-	if m.collapsed[r.key] {
+	if m.collapsed[r.key] && !r.forced {
 		return "▸ "
 	}
 	return "▾ "
@@ -484,8 +535,11 @@ func (m *Model) statusLine() string {
 	if isUnavailable(m.liveErr) {
 		parts = append(parts, "process detection unavailable")
 	}
+	if m.filter != "" {
+		parts = append([]string{fmt.Sprintf("filter %q", sanitize(m.filter))}, parts...)
+	}
 	s := strings.Join(parts, " · ")
-	if hint := " · r refresh · q quit"; ansi.StringWidth(s+hint) <= m.w() {
+	if hint := " · r refresh · ? help · q quit"; ansi.StringWidth(s+hint) <= m.w() {
 		s += hint
 	}
 	return s

@@ -234,6 +234,9 @@ type metaPayload struct {
 	Cwd          string          `json:"cwd"`
 	Source       json.RawMessage `json:"source"`
 	ThreadSource string          `json:"thread_source"`
+	Git          *struct {
+		Branch string `json:"branch"`
+	} `json:"git"`
 }
 
 type turnContextPayload struct {
@@ -266,33 +269,9 @@ func (s *Source) parse(c candidate) (_ *sessions.Session, skipped bool, _ error)
 	}
 	defer f.Close()
 
-	// Line 1 (session_meta) gets its own, larger cap; only the needed fields
-	// are decoded. The head scan then starts right after it.
-	var m *metaPayload
-	var headStart int64
-	dropFirst := false
-	var first struct {
-		Type    string      `json:"type"`
-		Payload metaPayload `json:"payload"`
-	}
-	dec := json.NewDecoder(io.NewSectionReader(f, 0, min(c.size, MetaLimit)))
-	if err := dec.Decode(&first); err != nil {
-		// Oversized or malformed first line: start the head after it.
-		headStart, dropFirst = skipFirstLine(f, min(c.size, MetaLimit+1))
-	} else if first.Type == "session_meta" {
-		m = &first.Payload
-		headStart = dec.InputOffset()
-	}
-
-	headN := min(c.size-headStart, HeadLimit)
-	head := make([]byte, headN)
-	if _, err := f.ReadAt(head, headStart); err != nil && !errors.Is(err, io.EOF) {
+	m, h, head, headEnd, err := readHead(f, c.size)
+	if err != nil {
 		return nil, false, fmt.Errorf("%s: %w", c.path, err)
-	}
-	headEnd := headStart + headN
-	h := scanChunk(head, dropFirst, c.size > headEnd)
-	if m == nil {
-		m = h.meta
 	}
 	if m != nil && isSubagent(m) {
 		return nil, false, nil
@@ -349,6 +328,68 @@ func (s *Source) parse(c candidate) (_ *sessions.Session, skipped bool, _ error)
 		LastActivity: c.mtime,
 		Path:         c.path,
 	}, false, nil
+}
+
+// readHead reads the session_meta line (own MetaLimit cap, only the needed
+// fields decoded) and then up to HeadLimit bytes after it, which it scans.
+// m is the session_meta payload from line 1, else from the head scan.
+func readHead(f io.ReaderAt, size int64) (m *metaPayload, h scanInfo, head []byte, headEnd int64, err error) {
+	var headStart int64
+	dropFirst := false
+	var first struct {
+		Type    string      `json:"type"`
+		Payload metaPayload `json:"payload"`
+	}
+	dec := json.NewDecoder(io.NewSectionReader(f, 0, min(size, MetaLimit)))
+	if err := dec.Decode(&first); err != nil {
+		// Oversized or malformed first line: start the head after it.
+		headStart, dropFirst = skipFirstLine(f, min(size, MetaLimit+1))
+	} else if first.Type == "session_meta" {
+		m = &first.Payload
+		headStart = dec.InputOffset()
+	}
+	headN := max(min(size-headStart, HeadLimit), 0)
+	head = make([]byte, headN)
+	if _, err := f.ReadAt(head, headStart); err != nil && !errors.Is(err, io.EOF) {
+		return nil, scanInfo{}, nil, 0, err
+	}
+	headEnd = headStart + headN
+	h = scanChunk(head, dropFirst, size > headEnd)
+	if m == nil {
+		m = h.meta
+	}
+	return m, h, head, headEnd, nil
+}
+
+// Detail implements sessions.Detailer: it re-reads the rollout's meta line
+// and head (same bounds as List) and returns the full first prompt and
+// payload.git.branch.
+func (s *Source) Detail(ctx context.Context, sess sessions.Session) (sessions.Detail, error) {
+	if err := ctx.Err(); err != nil {
+		return sessions.Detail{}, err
+	}
+	open := s.open
+	if open == nil {
+		open = os.Open
+	}
+	f, err := open(sess.Path)
+	if err != nil {
+		return sessions.Detail{}, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return sessions.Detail{}, err
+	}
+	m, h, _, _, err := readHead(f, fi.Size())
+	if err != nil {
+		return sessions.Detail{}, fmt.Errorf("%s: %w", sess.Path, err)
+	}
+	d := sessions.Detail{Prompt: h.prompt}
+	if m != nil && m.Git != nil {
+		d.GitBranch = m.Git.Branch
+	}
+	return d, nil
 }
 
 // skipFirstLine returns the offset just past the first newline within the

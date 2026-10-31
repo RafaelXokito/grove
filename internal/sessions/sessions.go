@@ -69,3 +69,16 @@ func CleanTitle(s string, max int) string {
 	r := []rune(s)
 	return strings.TrimRight(string(r[:max-1]), " ") + "…"
 }
+
+// Detail is per-session information re-read on demand for the details pane
+// (FR-15); List keeps only what the tree needs.
+type Detail struct {
+	Prompt    string // first real prompt, untruncated (from a bounded head read)
+	GitBranch string // Codex payload.git.branch, when recorded
+}
+
+// Detailer is implemented by sources that can re-read a session's
+// transcript (s.Path) with a bounded read.
+type Detailer interface {
+	Detail(ctx context.Context, s Session) (Detail, error)
+}
