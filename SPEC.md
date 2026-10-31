@@ -168,7 +168,7 @@ Case-insensitive substring match on project name, worktree path, branch, and ses
 - Given any root, When grove starts, Then the first frame renders within 100 ms showing a loading spinner; repos appear incrementally as they are discovered.
 - All git and file I/O happens in `tea.Cmd`s, never in `Update`/`View`.
 - Concurrency bounded (default `runtime.NumCPU()*2` workers for git calls).
-- Each per-worktree `git status` call has a timeout (default 10 s, `scan.Options.StatusTimeout`); a hung repo yields a per-worktree error (`status timed out after 10s`) and never stalls the scan.
+- Each scan git call (`worktree list`, per-worktree `status`) has a timeout (default 10 s, `scan.Options.GitTimeout`); a hung repo yields a per-repo/per-worktree error (`status <path>: timed out after 10s`), frees its worker slot, and never stalls the scan.
 - Session parsing reads at most 256 KiB head + 64 KiB tail per file plus `stat`; files are never fully read; files outside the history window are not opened.
 - Given 50 repos × 3 worktrees and 2,000 session files on an SSD, Then full scan completes in < 2 s (benchmark, not a CI gate).
 
@@ -307,7 +307,7 @@ AC: fixture repo tests for clean, dirty (3), ahead/behind with a local bare "rem
 
 **T3 — Repo discovery + concurrent scanner** (FR-1, FR-18 partial)
 `scan.Discover` (depth, skip list, `.git` file vs dir), bounded worker pool loading worktrees+status, streaming results.
-AC: TempDir root with 2 repos, 1 non-repo, 1 linked worktree inside root, 1 repo beyond depth → exactly 2 repos; `-race` clean; unreadable dir doesn't abort; a hung `git status` times out (default 10 s) as a per-worktree error.
+AC: TempDir root with 2 repos, 1 non-repo, 1 linked worktree inside root, 1 repo beyond depth → exactly 2 repos; `-race` clean; unreadable dir doesn't abort; a hung git call times out (default 10 s) as a per-repo/per-worktree error; `MaxDepth` 0 = default 3, negative = roots only; roots differing only in case (darwin) scanned once.
 
 **T4 — Session model, binder, Claude source** (FR-4)
 `sessions.Session`, `Source`, `Bind`; `claude.Source{Dir}` with bounded head/tail reads, last-cwd binding, ai-title, subagent exclusion, history window.
