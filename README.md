@@ -30,15 +30,13 @@ line lists the keys that apply to the selected row.)
 
 ## Install
 
-There is no published remote yet; build from a checkout:
-
 ```sh
-go install ./cmd/grove          # needs Go 1.26+
+go install github.com/RafaelXokito/grove/cmd/grove@latest   # needs Go 1.26+
 grove --version
 ```
 
 Set a version at build time with
-`go install -ldflags "-X main.version=v0.1.0" ./cmd/grove`.
+`go install -ldflags "-X main.version=v0.1.0" ./cmd/grove` from a checkout.
 
 ## Usage
 
