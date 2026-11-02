@@ -151,24 +151,60 @@ func (m *Model) setError(s string)   { m.message, m.msgErr = sanitize(s), true }
 // message and returns ok=false (FR-8: session rows act on their worktree).
 func (m *Model) target() (*scan.Repo, *gitx.Worktree, bool) {
 	repo, wt := m.selection()
-	switch {
-	case repo == nil:
+	if repo == nil {
 		return nil, nil, false
-	case wt == nil:
-		m.setMessage("select a worktree")
-	case wt.IsBare:
-		m.setMessage("bare repository: no working tree")
-	case m.busy[wt.Path] != "":
-		m.setMessage(m.busy[wt.Path] + " in progress")
-	case m.busy["r:"+repo.Path] != "":
-		m.setMessage(m.busy["r:"+repo.Path] + " in progress for " + repo.Name)
-	case wt.Prunable:
-		m.setMessage("worktree is missing; press p to prune")
-	default:
-		return repo, wt, true
 	}
-	return nil, nil, false
+	if why := m.targetRefusal(repo, wt); why != "" {
+		m.setMessage(why)
+		return nil, nil, false
+	}
+	return repo, wt, true
 }
+
+// targetRefusal says why worktree actions do not apply to (repo, wt), or ""
+// if they do. target and the key hint bar share it.
+func (m *Model) targetRefusal(repo *scan.Repo, wt *gitx.Worktree) string {
+	switch {
+	case wt == nil:
+		return "select a worktree"
+	case wt.IsBare:
+		return "bare repository: no working tree"
+	case m.busy[wt.Path] != "":
+		return m.busy[wt.Path] + " in progress"
+	case m.busy["r:"+repo.Path] != "":
+		return m.busy["r:"+repo.Path] + " in progress for " + repo.Name
+	case wt.Prunable:
+		return "worktree is missing; press p to prune"
+	}
+	return ""
+}
+
+// detachRefusal, lockRefusal and removeRefusal add each action's own
+// refusal on top of a valid target (shared with the key hint bar).
+func detachRefusal(wt *gitx.Worktree) string {
+	if wt.Detached() {
+		return "already detached"
+	}
+	return ""
+}
+
+func lockRefusal(wt *gitx.Worktree) string {
+	if wt.IsMain {
+		return "cannot lock the main worktree"
+	}
+	return ""
+}
+
+func removeRefusal(wt *gitx.Worktree) string {
+	if wt.IsMain {
+		return "cannot remove the main worktree"
+	}
+	return ""
+}
+
+// repoBusy reports the running repo-level action (new worktree, prune) for
+// repo, or "".
+func (m *Model) repoBusy(repo *scan.Repo) string { return m.busy["r:"+repo.Path] }
 
 // run starts an action in a tea.Cmd, marking key busy until it finishes.
 func (m *Model) run(key, label, repo string, f actionFunc) tea.Cmd {
@@ -294,8 +330,8 @@ func (m *Model) detach() tea.Cmd {
 	if !ok {
 		return nil
 	}
-	if wt.Detached() {
-		m.setMessage("already detached")
+	if why := detachRefusal(wt); why != "" {
+		m.setMessage(why)
 		return nil
 	}
 	disp, branch, path, sha := m.display(wt.Path), wt.Branch, wt.Path, wt.ShortHEAD()
@@ -437,8 +473,8 @@ func (m *Model) lock() tea.Cmd {
 	if !ok {
 		return nil
 	}
-	if wt.IsMain {
-		m.setMessage("cannot lock the main worktree")
+	if why := lockRefusal(wt); why != "" {
+		m.setMessage(why)
 		return nil
 	}
 	path, disp, rp := wt.Path, m.display(wt.Path), repo.Path
@@ -469,7 +505,7 @@ func (m *Model) prune() tea.Cmd {
 		return nil
 	}
 	key, path := "r:"+repo.Path, repo.Path
-	if l := m.busy[key]; l != "" {
+	if l := m.repoBusy(repo); l != "" {
 		m.setMessage(l + " in progress")
 		return nil
 	}

@@ -31,7 +31,7 @@ func (m *Model) newWorktree() tea.Cmd {
 		return nil
 	}
 	key, path := "r:"+repo.Path, repo.Path
-	if l := m.busy[key]; l != "" {
+	if l := m.repoBusy(repo); l != "" {
 		m.setMessage(l + " in progress for " + repo.Name)
 		return nil
 	}
@@ -270,8 +270,8 @@ func (m *Model) remove() tea.Cmd {
 	if !ok {
 		return nil
 	}
-	if wt.IsMain {
-		m.setMessage("cannot remove the main worktree")
+	if why := removeRefusal(wt); why != "" {
+		m.setMessage(why)
 		return nil
 	}
 	path := wt.Path

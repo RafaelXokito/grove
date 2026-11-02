@@ -21,10 +21,12 @@ grove  ~/Documents/repos
   ▸ web  ★  main  clean
   ▸ web-old  missing  [prunable]
 ▸ infra  2 worktrees
-3 repos · 7 worktrees · 3 sessions · 1 live · r refresh · ? help · q quit
+←/→ fold · n new · p prune · / filter · r refresh · ? help · q quit
+3 repos · 7 worktrees · 3 sessions · 1 live
 ```
 
-(`★` marks the primary worktree, `●` a live agent.)
+(`★` marks the primary worktree, `●` a live agent. The line above the status
+line lists the keys that apply to the selected row.)
 
 ## Install
 

@@ -185,14 +185,24 @@ func (m *Model) w() int {
 	return defaultWidth
 }
 
-// bodyHeight is the number of tree rows that fit between header and footer.
-func (m *Model) bodyHeight() int {
+// rawBodyHeight is the room between header and status line left by the
+// footer (message, dialog, filter input), before the key hint bar.
+func (m *Model) rawBodyHeight() int {
 	h := m.height
 	if h <= 0 {
 		h = defaultHeight
 	}
 	h -= 2 // header + status line
-	h -= len(m.footer(m.w()))
+	return h - len(m.footer(m.w()))
+}
+
+// bodyHeight is the number of tree rows that fit between header and footer
+// (including the key hint bar, when shown).
+func (m *Model) bodyHeight() int {
+	h := m.rawBodyHeight()
+	if m.hintsVisible() {
+		h--
+	}
 	if h < 1 {
 		h = 1
 	}
@@ -213,6 +223,10 @@ func (m *Model) View() string {
 	b.WriteString(body)
 	for _, l := range m.footer(w) {
 		b.WriteString(fit(l, w))
+		b.WriteByte('\n')
+	}
+	if m.hintsVisible() {
+		b.WriteString(hintLine(m.hints(), w))
 		b.WriteByte('\n')
 	}
 	status := m.statusLine()
@@ -617,8 +631,12 @@ func (m *Model) statusLine() string {
 		parts = append([]string{fmt.Sprintf("filter %q", sanitize(m.filter))}, parts...)
 	}
 	s := strings.Join(parts, " · ")
-	if hint := " · r refresh · ? help · q quit"; ansi.StringWidth(s+hint) <= m.w() {
-		s += hint
+	// The keys are normally in the hint bar above; on a terminal too short
+	// for it, keep the essentials here when they fit.
+	if m.dialog == nil && !m.filtering && !m.hintsVisible() {
+		if hint := " · r refresh · ? help · q quit"; ansi.StringWidth(s+hint) <= m.w() {
+			s += hint
+		}
 	}
 	return s
 }
