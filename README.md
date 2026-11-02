@@ -141,3 +141,7 @@ go test ./internal/scan -run x -bench Scan     # FR-18 scan benchmark
 ```
 
 See `SPEC.md` for the full specification.
+
+## License
+
+[MIT](LICENSE)
