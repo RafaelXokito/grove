@@ -30,13 +30,38 @@ line lists the keys that apply to the selected row.)
 
 ## Install
 
+Download a release archive (`grove_<version>_<os>_<arch>.tar.gz`, macOS and
+Linux, amd64/arm64) from
+[Releases](https://github.com/RafaelXokito/grove/releases), verify it against
+`checksums.txt`, and put `grove` on your `PATH`. Or, with Go 1.26+:
+
 ```sh
-go install github.com/RafaelXokito/grove/cmd/grove@latest   # needs Go 1.26+
+go install github.com/RafaelXokito/grove/cmd/grove@latest
 grove --version
 ```
 
 Set a version at build time with
 `go install -ldflags "-X main.version=v0.1.0" ./cmd/grove` from a checkout.
+
+## Updating
+
+When a newer release exists, grove shows `↑ vX.Y.Z available · grove update`
+at the bottom right, next to the key hints. The check runs in the background
+at most once a day (cached in `$XDG_CACHE_HOME/grove/update.json`, else
+`~/Library/Caches/grove` on macOS / `~/.cache/grove` on Linux), never delays
+startup, fails silently, and is skipped for development builds. Turn it off
+with `update_check = false` in the config file or `GROVE_NO_UPDATE_CHECK=1`.
+
+```sh
+grove update           # download, verify (sha256) and replace this binary
+grove update --check   # print the current and latest versions
+```
+
+`grove update` only downloads from GitHub over https, checks the archive
+against the release's `checksums.txt`, and checks that the new binary runs
+before swapping it in atomically. If the binary's directory isn't writable,
+rerun with `sudo` or reinstall with `go install …@latest`. Development
+builds refuse to self-update unless given `--force`.
 
 ## Usage
 
@@ -97,6 +122,7 @@ Precedence: **flags > environment > config file > defaults**.
 | | | `git_timeout` | `"10s"` per git call |
 | `--claude-dir` | | | `~/.claude` |
 | `--codex-dir` | `CODEX_HOME` | | `~/.codex` |
+| | `GROVE_NO_UPDATE_CHECK=1` | `update_check` | `true` (new-release check) |
 
 The config file is optional and lives at `$XDG_CONFIG_HOME/grove/config.toml`
 (default `~/.config/grove/config.toml`):
@@ -107,6 +133,7 @@ max_depth = 3
 history_days = 30
 live_interval = "5s"
 git_timeout = "10s"
+update_check = true
 ```
 
 Unknown keys produce a warning; malformed TOML or invalid values (negative
@@ -149,7 +176,15 @@ go build ./... && go vet ./... && go test -race ./...
 go test ./internal/scan -run x -bench Scan     # FR-18 scan benchmark
 ```
 
-See `SPEC.md` for the full specification.
+See `SPEC.md` for the full specification and `CONTRIBUTING.md` for the
+compatibility policy and release process.
+
+## Compatibility
+
+Every release is backwards compatible: flags, subcommands, environment
+variables, config keys and key bindings are never removed, renamed or given
+a new meaning, and a config file that worked with an earlier release keeps
+working the same way (SPEC §7).
 
 ## License
 

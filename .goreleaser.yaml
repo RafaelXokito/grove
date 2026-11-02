@@ -1,0 +1,45 @@
+# GoReleaser v2 config. Releases are cut by pushing a vX.Y.Z tag on main
+# (.github/workflows/release.yml). Asset names are relied on by
+# `grove update` (internal/update.AssetName): do not change them (SPEC §7).
+version: 2
+
+project_name: grove
+
+before:
+  hooks:
+    - go mod tidy -diff
+
+builds:
+  - id: grove
+    main: ./cmd/grove
+    binary: grove
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version=v{{ .Version }}
+
+archives:
+  - id: grove
+    ids: [grove]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  use: github
+  sort: asc
+
+release:
+  github:
+    owner: RafaelXokito
+    name: grove
+  prerelease: auto

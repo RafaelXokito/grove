@@ -1,0 +1,8 @@
+# grove v0.1.0 compatibility snapshot: every config key of this release.
+# Never edit; later releases must load it with the same meaning (SPEC §7).
+roots = ["~/src", "/abs/work"]
+max_depth = 2
+history_days = 7
+live_interval = "2s"
+git_timeout = "20s"
+update_check = false

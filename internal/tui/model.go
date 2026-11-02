@@ -22,6 +22,7 @@ import (
 	"github.com/RafaelXokito/grove/internal/scan"
 	"github.com/RafaelXokito/grove/internal/sessions"
 	"github.com/RafaelXokito/grove/internal/sessions/live"
+	"github.com/RafaelXokito/grove/internal/update"
 )
 
 // DefaultLiveInterval is the live poll period (FR-6, live_interval).
@@ -51,6 +52,9 @@ type Deps struct {
 	LiveInterval time.Duration
 	// Warnings (e.g. unknown config keys) are shown in the status line.
 	Warnings []string
+	// UpdateCheck returns a newer release tag, or "" (FR-23). It runs in
+	// the background after the first frame; nil disables the check.
+	UpdateCheck func(context.Context) string
 
 	// Test seams; nil means the real implementation.
 	Scan func(context.Context, scan.Options) <-chan scan.Event
@@ -69,6 +73,9 @@ type Model struct {
 	deps   Deps
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	// updateTag is a newer release (FR-23), "" when none is known.
+	updateTag string
 
 	// scan state
 	gen        int
@@ -194,6 +201,9 @@ func (m *Model) Init() tea.Cmd {
 	if m.deps.Procs != nil {
 		cmds = append(cmds, pollLive(m.ctx, m.deps.Procs))
 	}
+	if m.deps.UpdateCheck != nil {
+		cmds = append(cmds, checkUpdate(m.ctx, m.deps.UpdateCheck))
+	}
 	return tea.Batch(cmds...)
 }
 
@@ -288,6 +298,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m, m.handleKey(msg)
+
+	case updateAvailableMsg:
+		if update.ValidTag(msg.tag) { // network data: only plain vX.Y.Z
+			m.updateTag = msg.tag
+		}
+		return m, nil
 
 	case spinTickMsg:
 		m.spinFrame++

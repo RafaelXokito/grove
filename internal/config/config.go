@@ -33,6 +33,10 @@ const (
 // EnvRoot is the comma-separated roots environment variable.
 const EnvRoot = "GROVE_ROOT"
 
+// EnvNoUpdateCheck disables the release check (FR-23) when set to anything
+// but "", "0" or "false".
+const EnvNoUpdateCheck = "GROVE_NO_UPDATE_CHECK"
+
 // Config is the resolved configuration. Paths are absolute with ~ expanded.
 type Config struct {
 	Roots []string
@@ -43,6 +47,8 @@ type Config struct {
 	GitTimeout   time.Duration
 	ClaudeDir    string
 	CodexDir     string
+	// UpdateCheck enables the background release check (FR-23).
+	UpdateCheck bool
 
 	// Warnings are non-fatal problems (e.g. unknown config keys).
 	Warnings []string
@@ -64,6 +70,7 @@ type File struct {
 	HistoryDays  *int     `toml:"history_days"`
 	LiveInterval string   `toml:"live_interval"`
 	GitTimeout   string   `toml:"git_timeout"`
+	UpdateCheck  *bool    `toml:"update_check"`
 }
 
 // Path returns the config file location: $XDG_CONFIG_HOME/grove/config.toml,
@@ -109,6 +116,7 @@ func Resolve(fl Flags, getenv func(string) string, file File, home string) (Conf
 		GitTimeout:   DefaultGitTimeout,
 		ClaudeDir:    filepath.Join(home, ".claude"),
 		CodexDir:     filepath.Join(home, ".codex"),
+		UpdateCheck:  true,
 	}
 	if d := getenv("CODEX_HOME"); d != "" {
 		c.CodexDir = d
@@ -142,7 +150,16 @@ func Resolve(fl Flags, getenv func(string) string, file File, home string) (Conf
 		c.GitTimeout = d
 	}
 
+	if file.UpdateCheck != nil {
+		c.UpdateCheck = *file.UpdateCheck
+	}
+
 	// env
+	switch v := strings.TrimSpace(getenv(EnvNoUpdateCheck)); strings.ToLower(v) {
+	case "", "0", "false":
+	default:
+		c.UpdateCheck = false
+	}
 	if v := getenv(EnvRoot); strings.TrimSpace(v) != "" {
 		var roots []string
 		for _, r := range strings.Split(v, ",") {

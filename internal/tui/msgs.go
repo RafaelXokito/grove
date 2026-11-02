@@ -42,6 +42,20 @@ type liveLoadedMsg struct {
 	once  bool // an extra poll after an action: does not re-arm the tick
 }
 
+// updateAvailableMsg reports a newer grove release (FR-23).
+type updateAvailableMsg struct{ tag string }
+
+// checkUpdate runs the release check in the background. It yields no
+// message when there is nothing newer (or the check failed).
+func checkUpdate(ctx context.Context, check func(context.Context) string) tea.Cmd {
+	return func() tea.Msg {
+		if tag := check(ctx); tag != "" {
+			return updateAvailableMsg{tag: tag}
+		}
+		return nil
+	}
+}
+
 // spinTickMsg advances the loading spinner.
 type spinTickMsg struct{}
 

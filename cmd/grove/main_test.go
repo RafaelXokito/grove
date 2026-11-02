@@ -2,15 +2,18 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/RafaelXokito/grove/internal/tui"
+	"github.com/RafaelXokito/grove/internal/update"
 )
 
 // isolate points home/env at a temp dir so tests never read the real config,
@@ -20,6 +23,15 @@ func isolate(t *testing.T, envm map[string]string) (string, *[]tui.Deps) {
 	h := t.TempDir()
 	var launched []tui.Deps
 	origTUI, origEnv, origHome, origWd, origScope := runTUI, getenv, home, getwd, resolveScope
+	origVersion, origBI, origClient, origHook := version, readBuildInfo, updateClient, resolvedHook
+	origExe, origOS, origArch, origRunVersion := executable, goos, goarch, runVersion
+	readBuildInfo = func() (*debug.BuildInfo, bool) { return nil, false }
+	// Never touch the network or the real binary.
+	updateClient = func(v string) *update.Client {
+		return &update.Client{APIBase: "http://127.0.0.1:1", Version: v, Hosts: []string{}}
+	}
+	executable = func() (string, error) { return "", errors.New("test: no executable") }
+	runVersion = func(context.Context, string) ([]byte, error) { return nil, errors.New("test: no exec") }
 	runTUI = func(d tui.Deps) error { launched = append(launched, d); return nil }
 	getenv = func(k string) string { return envm[k] }
 	home = func() string { return h }
@@ -29,6 +41,8 @@ func isolate(t *testing.T, envm map[string]string) (string, *[]tui.Deps) {
 	resolveScope = func(string, time.Duration) (string, bool, error) { return "", false, nil }
 	t.Cleanup(func() {
 		runTUI, getenv, home, getwd, resolveScope = origTUI, origEnv, origHome, origWd, origScope
+		version, readBuildInfo, updateClient, resolvedHook = origVersion, origBI, origClient, origHook
+		executable, goos, goarch, runVersion = origExe, origOS, origArch, origRunVersion
 	})
 	return h, &launched
 }

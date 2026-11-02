@@ -1,0 +1,33 @@
+{
+  "release": "v0.1.0",
+  "flags": ["root", "depth", "history-days", "claude-dir", "codex-dir", "all", "a", "version", "h", "help"],
+  "env": ["GROVE_ROOT", "CODEX_HOME", "GROVE_OPEN", "GROVE_NO_UPDATE_CHECK", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"],
+  "subcommands": ["update"],
+  "update_flags": ["check", "force"],
+  "cases": [
+    {"name": "defaults", "args": [], "exit": 0, "want": {"roots": ["~/Documents/repos"], "max_depth": 3, "history_days": 30, "live_interval": "5s", "git_timeout": "10s", "claude_dir": "~/.claude", "codex_dir": "~/.codex", "update_check": true, "scoped": true}},
+    {"name": "config file", "config": "home", "args": [], "exit": 0, "want": {"roots": ["~/src", "/abs/work"], "max_depth": 2, "history_days": 7, "live_interval": "2s", "git_timeout": "20s", "update_check": false, "scoped": true}},
+    {"name": "XDG_CONFIG_HOME", "config": "xdg", "env": {"XDG_CONFIG_HOME": "$HOME/xdg"}, "args": [], "exit": 0, "want": {"roots": ["~/src", "/abs/work"], "max_depth": 2}},
+    {"name": "--root repeatable", "args": ["--root", "/a", "--root", "/b"], "exit": 0, "want": {"roots": ["/a", "/b"], "scoped": false}},
+    {"name": "--root=", "args": ["--root=/a"], "exit": 0, "want": {"roots": ["/a"], "scoped": false}},
+    {"name": "-root single dash", "args": ["-root", "/a"], "exit": 0, "want": {"roots": ["/a"]}},
+    {"name": "--depth", "args": ["--depth", "0"], "exit": 0, "want": {"max_depth": 0}},
+    {"name": "--history-days", "args": ["--history-days", "0"], "exit": 0, "want": {"history_days": 0}},
+    {"name": "--claude-dir", "args": ["--claude-dir", "/c"], "exit": 0, "want": {"claude_dir": "/c"}},
+    {"name": "--codex-dir", "args": ["--codex-dir", "/x"], "exit": 0, "want": {"codex_dir": "/x"}},
+    {"name": "--all", "args": ["--all"], "exit": 0, "want": {"scoped": false}},
+    {"name": "-a", "args": ["-a"], "exit": 0, "want": {"scoped": false}},
+    {"name": "flags beat env and file", "config": "home", "env": {"GROVE_ROOT": "/e"}, "args": ["--root", "/f", "--depth", "1", "--history-days", "3"], "exit": 0, "want": {"roots": ["/f"], "max_depth": 1, "history_days": 3}},
+    {"name": "GROVE_ROOT", "env": {"GROVE_ROOT": "/e1, /e2"}, "args": [], "exit": 0, "want": {"roots": ["/e1", "/e2"], "scoped": true}},
+    {"name": "GROVE_ROOT beats file", "config": "home", "env": {"GROVE_ROOT": "/e"}, "args": [], "exit": 0, "want": {"roots": ["/e"]}},
+    {"name": "CODEX_HOME", "env": {"CODEX_HOME": "/ch"}, "args": [], "exit": 0, "want": {"codex_dir": "/ch"}},
+    {"name": "--codex-dir beats CODEX_HOME", "env": {"CODEX_HOME": "/ch"}, "args": ["--codex-dir", "/x"], "exit": 0, "want": {"codex_dir": "/x"}},
+    {"name": "GROVE_NO_UPDATE_CHECK", "env": {"GROVE_NO_UPDATE_CHECK": "1"}, "args": [], "exit": 0, "want": {"update_check": false}},
+    {"name": "--version", "args": ["--version"], "exit": 0, "no_tui": true},
+    {"name": "--help", "args": ["--help"], "exit": 0, "no_tui": true},
+    {"name": "-h", "args": ["-h"], "exit": 0, "no_tui": true},
+    {"name": "update --help", "args": ["update", "--help"], "exit": 0, "no_tui": true},
+    {"name": "unknown flag", "args": ["--nope"], "exit": 2, "no_tui": true},
+    {"name": "invalid config value exits 2", "args": ["--history-days", "-1"], "exit": 2, "no_tui": true}
+  ]
+}

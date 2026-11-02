@@ -227,14 +227,19 @@ func (m *Model) View() string {
 		b.WriteByte('\n')
 	}
 	if m.hintsVisible() {
-		b.WriteString(hintLine(m.hints(), w))
+		b.WriteString(m.hintBar(w))
 		b.WriteByte('\n')
 	}
 	status := m.statusLine()
 	if m.overlay != nil {
 		status = m.overlayStatus()
 	}
-	b.WriteString(fit(styleStatus.Render(status), w))
+	line := fit(styleStatus.Render(status), w)
+	if !m.hintsVisible() {
+		// no hint bar: the update label goes on the status line if it fits
+		line, _ = withRightLabel(line, m.updateLabel(), w)
+	}
+	b.WriteString(line)
 	return b.String()
 }
 

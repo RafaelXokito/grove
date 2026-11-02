@@ -19,6 +19,43 @@ var (
 
 const hintSep = " · "
 
+// styleUpdate is the subtle accent of the "new release" label (FR-23).
+var styleUpdate = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Faint(true)
+
+// updateLabel is the plain "new release" label, "" when none is known.
+func (m *Model) updateLabel() string {
+	if m.updateTag == "" {
+		return ""
+	}
+	return "↑ " + sanitize(m.updateTag) + " available · grove update"
+}
+
+// withRightLabel renders left (already fitted to its own budget) and the
+// update label right-aligned within w cells. ok is false when they do not
+// both fit with at least one space between them.
+func withRightLabel(left, label string, w int) (string, bool) {
+	lw, rw := ansi.StringWidth(left), ansi.StringWidth(label)
+	if label == "" || lw+1+rw > w {
+		return left, false
+	}
+	return left + strings.Repeat(" ", w-lw-rw) + styleUpdate.Render(label), true
+}
+
+// hintBar renders the key hint bar line: the hints, and the update label
+// right-aligned when there is room for it and at least "? help" (FR-23).
+func (m *Model) hintBar(w int) string {
+	hs := m.hints()
+	if label := m.updateLabel(); label != "" {
+		avail := w - ansi.StringWidth(label) - 1
+		if avail >= plainWidth([]hint{hintHelp}) {
+			if line, ok := withRightLabel(hintLine(hs, avail), label, w); ok {
+				return line
+			}
+		}
+	}
+	return hintLine(hs, w)
+}
+
 type hint struct{ key, label string }
 
 func (h hint) String() string { return h.key + " " + h.label }

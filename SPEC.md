@@ -191,7 +191,8 @@ Precedence: flag > env > config file > default.
 - `~/.config/grove/config.toml` (respect `$XDG_CONFIG_HOME`), optional; unknown keys warn, don't fail.
 - `--claude-dir` (default `~/.claude`), `--codex-dir` (default `$CODEX_HOME` or `~/.codex`) — primarily for tests/debug.
 - `-a`/`--all`: show all repos even when started inside a repo (FR-22); `--root` also disables cwd scoping.
-- `--version`, `--help`.
+- `update_check` (bool, default `true`) / `GROVE_NO_UPDATE_CHECK=1`: FR-23.
+- `--version`, `--help`; subcommand `grove update` (FR-24).
 - Given `GROVE_ROOT=/a` and `--root /b`, Then root is `/b`.
 
 ### FR-21 Errors
@@ -209,6 +210,29 @@ At startup grove resolves the current working directory to decide what to show.
 - Session binding and live status are unchanged (the binder just sees fewer worktrees when scoped).
 - Given cwd = a subdirectory of a linked worktree, Then the scope is the main repo path. Given cwd inside a submodule nested in a superproject, Then the scope is the superproject. Given a non-git cwd, Then no scope (all view). Given `--root /x` or `--all`, Then no scope even inside a repo.
 
+### FR-23 Update check
+When a newer grove release exists, the TUI says so, like Claude Code does.
+- Source: `GET https://api.github.com/repos/RafaelXokito/grove/releases/latest` (`Accept: application/vnd.github+json`, `User-Agent: grove/<version>`, 3 s timeout). The `latest` endpoint already excludes drafts and prereleases. Only a `tag_name` matching `^v\d+\.\d+\.\d+$` is accepted (it comes from the network); anything else is treated as "no information".
+- Comparison is numeric semver on `major.minor.patch`; a release is "newer" only if strictly greater than the running version.
+- The running version is `main.version` (set with `-ldflags "-X main.version=vX.Y.Z"`); when that is the default `dev`, it falls back to the module version from `runtime/debug.ReadBuildInfo` (covers `go install …@vX.Y.Z`). `dev`, `(devel)`, empty, or any non-`vX.Y.Z` version is a **dev build**: no check runs.
+- Cache: `<os.UserCacheDir()>/grove/update.json` (`$XDG_CACHE_HOME/grove` when set, `~/Library/Caches/grove` on macOS, `~/.cache/grove` on Linux) holds `{"schema":1,"checked_at":<RFC 3339>,"latest":"vX.Y.Z"}`. A cache younger than 24 h is used without a network call. A missing, corrupt, future-dated or unknown-schema cache is ignored and rewritten after the next successful fetch. Failed fetches are not cached.
+- Runs as a background `tea.Cmd` started by `Init`; it never blocks or delays the first frame, and every error (network, HTTP status, JSON, cache I/O) is silent: no label, no message.
+- Disabled by config `update_check = false` (bool, default `true`) or env `GROVE_NO_UPDATE_CHECK=1` (any non-empty value other than `0`/`false`). Precedence follows FR-20 (env > file > default).
+- Rendering: `↑ vX.Y.Z available · grove update`, subtle accent colour, right-aligned on the key hint bar line. The hints get the remaining width (minus one separating space) and keep their drop-from-the-end rule. If the hint bar is hidden (dialog, filter, pane, too short), the label is right-aligned on the status line when it fits after the status text; otherwise it is omitted. Nothing is rendered when the label alone does not fit.
+- Given running v0.1.0 and latest v0.2.0, Then the label shows `v0.2.0`. Given latest equal/older/garbage, Then nothing. Given a fresh cache, Then no HTTP request.
+
+### FR-24 Self-update (`grove update`)
+`grove update [--check] [--force]` replaces the running binary with the latest release.
+- `update` is a subcommand recognised only as the **first** argument. All earlier invocations keep their meaning (before this FR any positional argument was a usage error, so nothing previously valid changes).
+- `--check`: print `grove <current>` and `latest: <tag>` (and whether an update is available) and exit 0; exit 1 only if the release could not be fetched.
+- Not newer: print `grove vX is up to date`, exit 0.
+- Dev builds refuse (exit 1) unless `--force`.
+- Download: the asset `grove_<version-without-v>_<GOOS>_<GOARCH>.tar.gz` and `checksums.txt` from the release's `browser_download_url`s. Every URL, including each redirect hop, must be `https` on `github.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com` or `api.github.com`; anything else aborts. Sizes are capped (archive 100 MiB, checksums 1 MiB).
+- Verify: sha256 of the archive must equal its line in `checksums.txt`; then extract only the regular-file entry named `grove` (or `<dir>/grove`), rejecting absolute paths, `..`, and symlink/hardlink entries named `grove`.
+- Install: resolve `os.Executable()` with `EvalSymlinks`, write to a temp file in that directory, `chmod 0755`, run it with `--version` and require it to print `grove <new tag>`, then `os.Rename` it over the old binary (atomic on the same filesystem). On any failure the temp file is removed and the old binary is untouched.
+- Permission denied (directory not writable): exit 1 with a message suggesting `sudo grove update` or `go install github.com/RafaelXokito/grove/cmd/grove@latest`.
+- The API base URL and download client are injectable; tests use `httptest` and temp dirs only.
+
 ## 3. Architecture
 
 ### 3.1 Layout
@@ -224,6 +248,8 @@ internal/sessions/codex/     Codex rollout source
 internal/sessions/live/      process lister (darwin: ps+lsof, linux: /proc)
 internal/tui/                Bubble Tea model, tree, dialogs, details pane, keymap, styles
 internal/pathx/              Clean+EvalSymlinks, IsWithin, ~ abbreviation
+internal/update/             release check + cache (FR-23), self-update (FR-24)
+testdata/compat/vX.Y.Z/      per-release config/flag/env snapshots (§7)
 testdata/                    fixture JSONL files
 ```
 
@@ -376,3 +402,14 @@ AC: precedence table test; unknown key warns; `go install ./cmd/grove` produces 
 6. **Refresh**: live status polled every 5 s; full git/session rescan only on `r` and after actions.
 7. **Roots**: multiple supported; default `["~/Documents/repos"]`.
 8. **Codex `.jsonl.zst`**: skipped with a count in v1 (no zstd dependency).
+
+## 7. Compatibility policy (from v0.1.0)
+
+Every release must be backwards compatible with every earlier release.
+- Versions follow semver, `vMAJOR.MINOR.PATCH`. This policy applies within v0.x too; a breaking change would need a new major version and is not planned.
+- Never remove or rename a CLI flag, subcommand, environment variable, config key or key binding, and never change its meaning or default behaviour in an incompatible way. New ones may be added.
+- Deprecated items keep working and print a warning (stderr or status line) naming the replacement.
+- A config file valid for any earlier release must load in every later release with the same meaning (no new errors, no changed values). Config and cache formats are additive only; the update cache carries a `schema` number and unknown schemas are ignored, never fatal.
+- Exit codes keep their meaning (0 ok, 1 runtime failure, 2 usage/config error).
+- Enforcement: `testdata/compat/<tag>/` holds, per release, a `config.toml` using every config key and an `invocations.json` listing every flag, env var and subcommand with the settings they must resolve to; `cmd/grove/compat_test.go` replays every snapshot and asserts the same exit codes and values, and `TestCompatSnapshotIsComplete` fails when a flag, env var or config key is missing from the newest snapshot. **Each release adds its own snapshot directory** (copy the previous one, add what is new); old snapshots are never edited.
+- Releases: merge to `main`, tag `vX.Y.Z` on `main`, push the tag; `.github/workflows/release.yml` runs GoReleaser, which publishes `grove_<version>_<os>_<arch>.tar.gz` (darwin/linux × amd64/arm64) and `checksums.txt`.
