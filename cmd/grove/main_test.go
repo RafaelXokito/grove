@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,11 +19,17 @@ func isolate(t *testing.T, envm map[string]string) (string, *[]tui.Deps) {
 	t.Helper()
 	h := t.TempDir()
 	var launched []tui.Deps
-	origTUI, origEnv, origHome := runTUI, getenv, home
+	origTUI, origEnv, origHome, origWd, origScope := runTUI, getenv, home, getwd, resolveScope
 	runTUI = func(d tui.Deps) error { launched = append(launched, d); return nil }
 	getenv = func(k string) string { return envm[k] }
 	home = func() string { return h }
-	t.Cleanup(func() { runTUI, getenv, home = origTUI, origEnv, origHome })
+	// The test binary runs inside grove's own repo: never resolve the
+	// real cwd (FR-22); by default it is "not a repo".
+	getwd = func() (string, error) { return h, nil }
+	resolveScope = func(string, time.Duration) (string, bool, error) { return "", false, nil }
+	t.Cleanup(func() {
+		runTUI, getenv, home, getwd, resolveScope = origTUI, origEnv, origHome, origWd, origScope
+	})
 	return h, &launched
 }
 
@@ -135,5 +142,67 @@ func TestRunEmptyGroveRoot(t *testing.T) {
 	}
 	if len(*got) != 0 {
 		t.Error("TUI launched with no roots")
+	}
+}
+
+// TestRunScope covers FR-22's precedence: cwd scoping applies by default and
+// with GROVE_ROOT, but --root and -a/--all disable it; errors fall back to
+// the all-repos view with a warning.
+func TestRunScope(t *testing.T) {
+	h, got := isolate(t, map[string]string{"GROVE_ROOT": "/env"})
+	var calls []string
+	var gotTimeout time.Duration
+	resolveScope = func(dir string, timeout time.Duration) (string, bool, error) {
+		calls = append(calls, dir)
+		gotTimeout = timeout
+		return "/repos/grove", true, nil
+	}
+	tests := []struct {
+		args      []string
+		wantScope string
+	}{
+		{nil, "/repos/grove"},
+		{[]string{"--depth", "1"}, "/repos/grove"},
+		{[]string{"--root", "/x"}, ""},
+		{[]string{"--all"}, ""},
+		{[]string{"-a"}, ""},
+		{[]string{"--all", "--root", "/x"}, ""},
+	}
+	for _, tt := range tests {
+		calls = nil
+		n := len(*got)
+		if code := run(tt.args, &bytes.Buffer{}, &bytes.Buffer{}); code != 0 || len(*got) != n+1 {
+			t.Fatalf("%v: code = %d", tt.args, code)
+		}
+		d := (*got)[n]
+		if d.Scope != tt.wantScope {
+			t.Errorf("%v: Scope = %q, want %q", tt.args, d.Scope, tt.wantScope)
+		}
+		if wantCalls := tt.wantScope != ""; wantCalls != (len(calls) == 1) {
+			t.Errorf("%v: resolveScope calls = %v", tt.args, calls)
+		}
+		if tt.wantScope != "" && (calls[0] != h || gotTimeout != 10*time.Second) {
+			t.Errorf("%v: resolveScope(%q, %v)", tt.args, calls[0], gotTimeout)
+		}
+		if tt.wantScope != "" && !reflect.DeepEqual(d.Roots, []string{"/env"}) {
+			t.Errorf("%v: GROVE_ROOT must still define the all view: %v", tt.args, d.Roots)
+		}
+	}
+
+	// Not in a repo, or detection failed: all view (failure is a warning).
+	resolveScope = func(string, time.Duration) (string, bool, error) { return "", false, nil }
+	run(nil, &bytes.Buffer{}, &bytes.Buffer{})
+	if d := (*got)[len(*got)-1]; d.Scope != "" || len(d.Warnings) != 0 {
+		t.Errorf("non-repo cwd: Scope = %q, warnings %v", d.Scope, d.Warnings)
+	}
+	resolveScope = func(string, time.Duration) (string, bool, error) { return "", false, errors.New("timed out") }
+	run(nil, &bytes.Buffer{}, &bytes.Buffer{})
+	if d := (*got)[len(*got)-1]; d.Scope != "" || len(d.Warnings) != 1 || !strings.Contains(d.Warnings[0], "timed out") {
+		t.Errorf("failed detection: Scope = %q, warnings %v", d.Scope, d.Warnings)
+	}
+	getwd = func() (string, error) { return "", errors.New("gone") }
+	run(nil, &bytes.Buffer{}, &bytes.Buffer{})
+	if d := (*got)[len(*got)-1]; d.Scope != "" || len(d.Warnings) != 1 {
+		t.Errorf("getwd error: Scope = %q, warnings %v", d.Scope, d.Warnings)
 	}
 }

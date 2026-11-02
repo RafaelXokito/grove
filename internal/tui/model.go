@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"time"
 
@@ -32,7 +33,10 @@ const maxSessionsShown = 5
 // Deps are the model's inputs and side-effect seams. Zero values mean
 // defaults where noted.
 type Deps struct {
-	Roots      []string
+	Roots []string
+	// Scope is the main path of the repository grove was started in
+	// (FR-22); "" means there is none and only the all-repos view exists.
+	Scope      string
 	Home       string // for ~ abbreviation; "" disables it
 	MaxDepth   int
 	Runner     gitx.Runner
@@ -111,6 +115,8 @@ type Model struct {
 	homeCanon     string            // canonical Home, for ~ abbreviation of canonical paths
 	rootsCanon    []string
 	keys          keyMap
+	scoped        bool   // showing only the Scope repo ("this repo" view, FR-22)
+	scopeKey      string // pathx.FoldKey of the canonical Scope
 
 	overlay     *overlay // details or help pane, if open
 	detailsSeq  int
@@ -156,7 +162,14 @@ func New(d Deps) *Model {
 	for i, r := range d.Roots {
 		rootsCanon[i] = pathx.Canonical(r)
 	}
+	var scopeKey string
+	if d.Scope != "" {
+		d.Scope = pathx.Canonical(d.Scope)
+		scopeKey = pathx.FoldKey(d.Scope)
+	}
 	return &Model{
+		scoped:      d.Scope != "",
+		scopeKey:    scopeKey,
 		homeCanon:   homeCanon,
 		rootsCanon:  rootsCanon,
 		deps:        d,
@@ -196,13 +209,21 @@ func (m *Model) rescan() tea.Cmd {
 	m.scanning = true
 	m.seen = map[string]bool{}
 	m.discErrs = nil
-	ch := m.deps.Scan(ctx, scan.Options{
+	opts := scan.Options{
 		Roots:      m.deps.Roots,
 		MaxDepth:   m.deps.MaxDepth,
 		Runner:     m.deps.Runner,
 		Limiter:    m.deps.Limiter,
 		GitTimeout: m.deps.GitTimeout,
-	})
+	}
+	if m.deps.Scope != "" {
+		// The scoped repo is always loaded, even outside the roots.
+		opts.Repos = []string{m.deps.Scope}
+	}
+	if m.scoped {
+		opts.Roots = nil
+	}
+	ch := m.deps.Scan(ctx, opts)
 	cmds := []tea.Cmd{waitScan(m.gen, ch)}
 	if len(m.deps.Sources) > 0 {
 		m.sessLoading = true
@@ -439,6 +460,8 @@ func (m *Model) dispatchKey(msg tea.KeyMsg) tea.Cmd {
 	case key.Matches(msg, k.Refresh):
 		m.message = msgRefreshing
 		return m.rescan()
+	case key.Matches(msg, k.Scope):
+		return m.toggleScope()
 	case key.Matches(msg, k.Enter):
 		if r, ok := m.current(); ok && r.kind == rowMore {
 			m.showAll[r.wtPath] = true
@@ -469,6 +492,40 @@ func (m *Model) dispatchKey(msg tea.KeyMsg) tea.Cmd {
 		m.setMessage("filter cleared")
 	}
 	return nil
+}
+
+// isScopeRepo reports whether r is the repo grove was started in. Scan
+// reports git's (canonical) paths, so no filesystem access is needed here.
+func (m *Model) isScopeRepo(r *scan.Repo) bool {
+	return m.scopeKey != "" && pathx.FoldKey(filepath.Clean(r.Path)) == m.scopeKey
+}
+
+// toggleScope implements `a`: switch between the started-in repo and all
+// repos under the roots (FR-22), keeping the cursor on the same row.
+func (m *Model) toggleScope() tea.Cmd {
+	if m.deps.Scope == "" {
+		m.setMessage("not started inside a git repo: already showing all repos")
+		return nil
+	}
+	m.scoped = !m.scoped
+	if len(m.rows) > 0 {
+		m.cursorMoved = true // keep the selection while repos stream in
+	}
+	if m.scoped {
+		kept := m.repos[:0]
+		for _, r := range m.repos {
+			if m.isScopeRepo(r) {
+				kept = append(kept, r)
+			}
+		}
+		m.repos = kept
+		m.binderStale = true
+		m.rebuild()
+		m.setMessage("showing this repo (a: all repos)")
+	} else {
+		m.setMessage("showing all repos (a: this repo)")
+	}
+	return tea.Batch(m.rescan(), m.requestBind())
 }
 
 func (m *Model) detailsLoading() bool {

@@ -3,11 +3,13 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -34,10 +36,14 @@ var runTUI = func(d tui.Deps) error {
 	return err
 }
 
-// getenv and home are seams for tests.
+// getenv, home, getwd and resolveScope are seams for tests.
 var (
-	getenv = os.Getenv
-	home   = pathx.UserHome
+	getenv       = os.Getenv
+	home         = pathx.UserHome
+	getwd        = os.Getwd
+	resolveScope = func(dir string, timeout time.Duration) (string, bool, error) {
+		return scan.ResolveScope(context.Background(), gitx.NewExecRunner(), dir, timeout)
+	}
 )
 
 func main() {
@@ -62,6 +68,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	historyDays := fs.Int("history-days", config.DefaultHistoryDays, "session history window in days (0 = unlimited)")
 	claudeDir := fs.String("claude-dir", "~/.claude", "Claude Code data directory")
 	codexDir := fs.String("codex-dir", "$CODEX_HOME or ~/.codex", "Codex data directory")
+	var all bool
+	fs.BoolVar(&all, "all", false, "show all repos under the roots even when started inside a git repo")
+	fs.BoolVar(&all, "a", false, "shorthand for --all")
 	showVersion := fs.Bool("version", false, "print version and exit")
 	fs.Usage = func() { usage(fs, cfgPath) }
 
@@ -111,11 +120,33 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	d := deps(cfg, h)
 	d.Warnings = warns
+	// FR-22: started inside a repo, show just that repo unless --root or
+	// --all asked for the roots.
+	if len(roots) == 0 && !all {
+		d.Scope, d.Warnings = scope(cfg.GitTimeout, d.Warnings)
+	}
 	if err := runTUI(d); err != nil {
 		fmt.Fprintf(stderr, "grove: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+// scope resolves the repository containing the cwd (FR-22); "" means the
+// all-repos view. Errors fall back to that view with a status-line warning.
+func scope(timeout time.Duration, warns []string) (string, []string) {
+	wd, err := getwd()
+	if err != nil {
+		return "", append(warns, fmt.Sprintf("cwd: %v (showing all repos)", err))
+	}
+	repo, ok, err := resolveScope(wd, timeout)
+	if err != nil {
+		return "", append(warns, fmt.Sprintf("cwd repo: %v (showing all repos)", err))
+	}
+	if !ok {
+		return "", warns
+	}
+	return repo, warns
 }
 
 func usage(fs *flag.FlagSet, cfgPath string) {
@@ -135,6 +166,9 @@ Config file (optional): %s
   live_interval = "5s"            git_timeout = "10s"
 
 Precedence: flags > environment > config file > defaults.
+
+Started inside a git repo, grove shows only that repo (press "a" to toggle
+all repos); --root or --all start in the all-repos view.
 `, cfgPath)
 }
 

@@ -89,6 +89,13 @@ func (m *Model) hints() []hint {
 	if m.filter != "" {
 		hs = append(hs, hint{"esc", "clear filter"})
 	}
+	if m.deps.Scope != "" { // low priority: dropped first when narrow
+		if m.scoped {
+			hs = append(hs, hint{"a", "all repos"})
+		} else {
+			hs = append(hs, hint{"a", "this repo"})
+		}
+	}
 	return append(hs, hintHelp, hintQuit)
 }
 

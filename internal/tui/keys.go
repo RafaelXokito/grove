@@ -10,7 +10,7 @@ type keyMap struct {
 	Enter, Refresh, Quit                  key.Binding
 	Detach, Checkout, Lock, Prune         key.Binding
 	New, Remove, Open                     key.Binding
-	Filter, Help                          key.Binding
+	Filter, Help, Scope                   key.Binding
 }
 
 // all lists every binding in help order; the help overlay (`?`) renders
@@ -21,7 +21,7 @@ func (k keyMap) all() []key.Binding {
 		k.Up, k.Down, k.PageUp, k.PageDown, k.Home, k.End,
 		k.Collapse, k.Expand, k.Toggle, k.Enter,
 		k.Detach, k.Checkout, k.New, k.Remove, k.Prune, k.Lock, k.Open,
-		k.Refresh, k.Filter, k.Help, k.Quit,
+		k.Refresh, k.Filter, k.Scope, k.Help, k.Quit,
 	}
 }
 
@@ -47,6 +47,7 @@ func defaultKeys() keyMap {
 		Remove:   key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "remove worktree")),
 		Open:     key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open $GROVE_OPEN / $EDITOR / $SHELL")),
 		Filter:   key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter (esc clears)")),
+		Scope:    key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "toggle this repo / all repos")),
 		Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	}
 }

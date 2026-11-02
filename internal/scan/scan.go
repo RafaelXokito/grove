@@ -63,6 +63,10 @@ const DefaultGitTimeout = 10 * time.Second
 // Options configure Scan. The zero value of every field means its default.
 type Options struct {
 	Roots []string
+	// Repos are repository paths loaded directly, without discovery, in
+	// addition to those found under Roots (e.g. the cwd scope of FR-22,
+	// which may lie outside every root). Duplicates are loaded once.
+	Repos []string
 	// MaxDepth is the directory depth scanned below each root: 0 means
 	// DefaultMaxDepth, < 0 scans only the roots themselves.
 	MaxDepth int
@@ -129,6 +133,16 @@ func Scan(ctx context.Context, opts Options) <-chan Event {
 	go func() {
 		defer wg.Done()
 		defer close(paths)
+		for _, p := range opts.Repos {
+			if p = pathx.Canonical(p); p == "" {
+				continue
+			}
+			select {
+			case paths <- p:
+			case <-ctx.Done():
+				return
+			}
+		}
 		discover(ctx, roots, opts.MaxDepth, paths, func(err error) { send(Event{Err: err}) })
 	}()
 	wg.Add(1)

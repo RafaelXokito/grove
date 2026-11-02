@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -285,11 +286,27 @@ func (m *Model) header() string {
 	for i, r := range m.deps.Roots {
 		roots[i] = pathx.AbbrevHome(r, m.deps.Home)
 	}
-	h := styleHeader.Render("grove") + "  " + strings.Join(roots, ", ")
+	var h string
+	if m.scoped {
+		h = styleHeader.Render("grove") + "  repo: " + sanitize(m.scopeName())
+	} else {
+		h = styleHeader.Render("grove") + "  all repos: " + strings.Join(roots, ", ")
+	}
 	if m.loading() {
 		h += "  " + m.spinner() + " " + m.loadingWhat()
 	}
 	return h
+}
+
+// scopeName names the started-in repo: as scanned once loaded, else the
+// directory name.
+func (m *Model) scopeName() string {
+	for _, r := range m.repos {
+		if r.Name != "" && m.isScopeRepo(r) {
+			return r.Name
+		}
+	}
+	return filepath.Base(m.deps.Scope)
 }
 
 func (m *Model) spinner() string { return spinFrames[m.spinFrame%len(spinFrames)] }

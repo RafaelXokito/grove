@@ -114,6 +114,7 @@ Polled every 5 s (`live_interval`), independently of the full rescan (FR-19).
 | `l` | lock/unlock (FR-14) |
 | `o` | open shell / `$EDITOR` (FR-16) |
 | `r` | refresh |
+| `a` | toggle this repo / all repos (FR-22) |
 | `/` | filter (FR-17) |
 | `?` | help |
 | `q`, `ctrl+c` | quit |
@@ -189,11 +190,24 @@ Precedence: flag > env > config file > default.
 - `live_interval` (default `5s`).
 - `~/.config/grove/config.toml` (respect `$XDG_CONFIG_HOME`), optional; unknown keys warn, don't fail.
 - `--claude-dir` (default `~/.claude`), `--codex-dir` (default `$CODEX_HOME` or `~/.codex`) — primarily for tests/debug.
+- `-a`/`--all`: show all repos even when started inside a repo (FR-22); `--root` also disables cwd scoping.
 - `--version`, `--help`.
 - Given `GROVE_ROOT=/a` and `--root /b`, Then root is `/b`.
 
 ### FR-21 Errors
 Per-repo or per-source errors appear inline (dimmed `!` row) and in a status line; they never crash the app. Git command failures show stderr (first 3 lines) in a dismissable message.
+
+### FR-22 Repository scope (cwd)
+At startup grove resolves the current working directory to decide what to show.
+- **Inside a git repository** (main worktree, a linked worktree, any subdirectory of one, or a bare repo dir): the tree is scoped to that repository only, expanded, with all its worktrees and bound sessions. The repo is identified by its main repo path: `git rev-parse --path-format=absolute --git-common-dir`, mapping `<x>/.git` → `<x>`, a bare repo → the common dir itself (otherwise the work tree top level); `scan.LoadRepo` then normalises it to the main worktree path. The repo may live outside the configured roots.
+- **Submodules**: if the cwd is inside a submodule, grove scopes to the **outermost superproject** (repeat `git rev-parse --show-superproject-working-tree` until it prints nothing), since that is the repo the user opened.
+- **Not inside any git repo**: the "all repos" view — scan the configured roots (FR-20, unchanged).
+- Explicit `--root` flag(s) disable cwd scoping; `-a`/`--all` forces the all-repos view. `GROVE_ROOT` and config `roots` do **not** disable scoping; they define the all-repos view.
+- Detection runs every git call through the git runner under one `git_timeout` budget; on any error (timeout, git missing) grove falls back to the all-repos view and notes the error in the status line. It never hangs startup.
+- `a` toggles "this repo" ↔ "all repos" (only when a scoped repo exists; otherwise it says so). The all view scans the roots and always includes the scoped repo, even outside the roots. The cursor stays on the same worktree if it is still shown. `r` and after-action rescans respect the current scope.
+- Header shows the scope: `grove  repo: <name>` or `grove  all repos: <roots>`.
+- Session binding and live status are unchanged (the binder just sees fewer worktrees when scoped).
+- Given cwd = a subdirectory of a linked worktree, Then the scope is the main repo path. Given cwd inside a submodule nested in a superproject, Then the scope is the superproject. Given a non-git cwd, Then no scope (all view). Given `--root /x` or `--all`, Then no scope even inside a repo.
 
 ## 3. Architecture
 

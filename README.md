@@ -9,7 +9,7 @@ reads their transcripts and process state so you can see at a glance which
 worktree an agent is working in before you detach, check out or remove it.
 
 ```
-grove  ~/Documents/repos
+grove  all repos: ~/Documents/repos
 ▾ api  3 worktrees
   ▾ api  ★  main  clean  ●
       claude 4f1c2a9e  Fix pagination in /orders            2m ago  ● busy
@@ -41,7 +41,8 @@ Set a version at build time with
 ## Usage
 
 ```sh
-grove                                   # scan ~/Documents/repos
+grove                                   # inside a repo: just that repo; elsewhere: scan ~/Documents/repos
+grove --all                             # all repos even when started inside one (also -a)
 grove --root ~/src --root ~/work        # several roots
 GROVE_ROOT=~/src,~/work grove
 grove --history-days 0                  # show all sessions, not just the last 30 days
@@ -51,6 +52,14 @@ grove scans each root (to depth 3 by default, skipping hidden dirs,
 `node_modules` and `vendor`) for git repositories, lists their worktrees with
 branch, dirty/clean state, ahead/behind, lock and prunable flags, and nests
 the agent sessions bound to each worktree underneath.
+
+Started inside a git repository (its main worktree, a linked worktree, any
+subdirectory of one, or a bare repo), grove shows only that repository, with
+all its worktrees, even if it lives outside the roots; the header reads
+`grove  repo: <name>`. Inside a submodule it shows the outermost
+superproject. Press `a` to switch between this repo and all repos. `--root`
+or `--all` start in the all-repos view; `GROVE_ROOT` and the config `roots`
+only define what "all repos" scans.
 
 ### Keys
 
@@ -68,7 +77,8 @@ the agent sessions bound to each worktree underneath.
 | `o` | open the worktree: `$GROVE_OPEN`, else `$EDITOR <path>`, else `$SHELL` in it |
 | `/` | filter by path/branch (`esc` clears) |
 | `?` | help |
-| `r` | full refresh (git + sessions) |
+| `r` | full refresh (git + sessions), in the current scope |
+| `a` | toggle this repo / all repos (when started inside a repo) |
 | `q` | quit |
 
 Branches are never deleted unless you ask for it in the remove dialog.
@@ -80,6 +90,7 @@ Precedence: **flags > environment > config file > defaults**.
 | Flag | Env | Config key | Default |
 | --- | --- | --- | --- |
 | `--root` (repeatable) | `GROVE_ROOT` (comma-separated) | `roots` | `["~/Documents/repos"]` |
+| `-a`, `--all` | | | off: started inside a repo, show only that repo |
 | `--depth` | | `max_depth` | `3` (`0` = roots only) |
 | `--history-days` | | `history_days` | `30` (`0` = unlimited) |
 | | | `live_interval` | `"5s"` (min `500ms`) |
